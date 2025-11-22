@@ -1,0 +1,350 @@
+"""
+M-Pesa Integration Services
+Following SOLID principles:
+- SRP: Each service class has a single responsibility
+- DIP: Services depend on abstractions (can be mocked for testing)
+"""
+
+import base64
+import requests
+from datetime import datetime
+from decimal import Decimal
+from typing import Dict, Optional
+from decouple import config
+from django.utils import timezone
+
+from .models import MpesaTransaction, MpesaCallback
+
+
+class MpesaAuthService:
+    """
+    Handles M-Pesa authentication.
+    Following SRP: Only responsible for obtaining access tokens.
+    """
+
+    def __init__(self):
+        self.consumer_key = config('MPESA_CONSUMER_KEY')
+        self.consumer_secret = config('MPESA_CONSUMER_SECRET')
+        self.use_sandbox = config('MPESA_USE_SANDBOX', default=True, cast=bool)
+
+        if self.use_sandbox:
+            self.base_url = 'https://sandbox.safaricom.co.ke'
+        else:
+            self.base_url = 'https://api.safaricom.co.ke'
+
+    def get_access_token(self) -> Optional[str]:
+        """
+        Get M-Pesa access token for API authentication.
+
+        Returns:
+            str: Access token if successful, None otherwise
+        """
+        try:
+            url = f"{self.base_url}/oauth/v1/generate?grant_type=client_credentials"
+
+            print("\n🔐 MPESA AUTHENTICATION")
+            print(f"   URL: {url}")
+            print(f"   Consumer Key: {self.consumer_key[:10]}...")
+            print(f"   Consumer Secret: {self.consumer_secret[:10]}...")
+
+            # Create base64 encoded credentials
+            credentials = f"{self.consumer_key}:{self.consumer_secret}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+            headers = {
+                'Authorization': f'Basic {encoded_credentials}',
+                'Content-Type': 'application/json'
+            }
+
+            response = requests.get(url, headers=headers, timeout=30)
+            print(f"   Auth Response Status: {response.status_code}")
+            print(f"   Auth Response Body: {response.text}")
+
+            response.raise_for_status()
+
+            data = response.json()
+            return data.get('access_token')
+
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error getting M-Pesa access token: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"   Response Status: {e.response.status_code}")
+                print(f"   Response Body: {e.response.text}")
+            return None
+
+
+class MpesaSTKService:
+    """
+    Handles STK Push (Lipa Na M-Pesa Online) requests.
+    Following SRP: Only responsible for initiating STK Push.
+    Following DIP: Depends on MpesaAuthService abstraction.
+    """
+
+    def __init__(self):
+        self.auth_service = MpesaAuthService()
+        self.business_short_code = config('MPESA_BUSINESS_SHORT_CODE')
+        self.lipa_na_mpesa_short_code = config('MPESA_LIPA_NA_MPESA_SHORT_CODE')
+        self.passkey = config('MPESA_LIPA_NA_MPESA_PASSKEY')
+        self.callback_url = config('MPESA_CALLBACK_URL')
+        self.use_sandbox = config('MPESA_USE_SANDBOX', default=True, cast=bool)
+
+        if self.use_sandbox:
+            self.base_url = 'https://sandbox.safaricom.co.ke'
+        else:
+            self.base_url = 'https://api.safaricom.co.ke'
+
+    def _generate_password(self, timestamp: str) -> str:
+        """Generate password for STK push"""
+        data = f"{self.lipa_na_mpesa_short_code}{self.passkey}{timestamp}"
+        return base64.b64encode(data.encode()).decode()
+
+    def initiate_stk_push(
+        self,
+        phone_number: str,
+        amount: Decimal,
+        account_reference: str,
+        transaction_desc: str
+    ) -> Dict:
+        """
+        Initiate STK Push to customer's phone.
+
+        Args:
+            phone_number: Customer phone number (254XXXXXXXXX format)
+            amount: Amount to charge
+            account_reference: Category code or reference
+            transaction_desc: Description of the transaction
+
+        Returns:
+            dict: Contains success status and transaction data or error message
+        """
+        try:
+            # Get access token
+            print("=" * 80)
+            print("MPESA STK PUSH - INITIATING")
+            print("=" * 80)
+
+            access_token = self.auth_service.get_access_token()
+            if not access_token:
+                print("❌ FAILED: Could not get access token")
+                return {
+                    'success': False,
+                    'message': 'Failed to authenticate with M-Pesa'
+                }
+
+            print(f"✅ Access token obtained: {access_token[:20]}...")
+
+            # Generate timestamp and password
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            password = self._generate_password(timestamp)
+
+            print(f"📅 Timestamp: {timestamp}")
+            print(f"🔐 Password generated (length: {len(password)})")
+
+            # Prepare request
+            url = f"{self.base_url}/mpesa/stkpush/v1/processrequest"
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            payload = {
+                'BusinessShortCode': self.lipa_na_mpesa_short_code,
+                'Password': password,
+                'Timestamp': timestamp,
+                'TransactionType': 'CustomerPayBillOnline',
+                'Amount': int(amount),  # M-Pesa requires integer
+                'PartyA': phone_number,
+                'PartyB': self.lipa_na_mpesa_short_code,
+                'PhoneNumber': phone_number,
+                'CallBackURL': self.callback_url,
+                'AccountReference': account_reference,
+                'TransactionDesc': transaction_desc
+            }
+
+            print("\n📤 REQUEST PAYLOAD:")
+            print(f"   URL: {url}")
+            print(f"   BusinessShortCode: {payload['BusinessShortCode']}")
+            print(f"   TransactionType: {payload['TransactionType']}")
+            print(f"   Amount: {payload['Amount']}")
+            print(f"   PhoneNumber: {payload['PhoneNumber']}")
+            print(f"   PartyA: {payload['PartyA']}")
+            print(f"   PartyB: {payload['PartyB']}")
+            print(f"   AccountReference: {payload['AccountReference']}")
+            print(f"   TransactionDesc: {payload['TransactionDesc']}")
+            print(f"   CallBackURL: {payload['CallBackURL']}")
+            print(f"   Password length: {len(payload['Password'])}")
+            print(f"   Timestamp: {payload['Timestamp']}")
+
+            print("\n📡 Sending request to M-Pesa...")
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+            print(f"📥 Response Status Code: {response.status_code}")
+            print(f"📥 Response Body: {response.text}")
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Check if request was successful
+            if data.get('ResponseCode') == '0':
+                # Create transaction record
+                transaction = MpesaTransaction.objects.create(
+                    merchant_request_id=data.get('MerchantRequestID'),
+                    checkout_request_id=data.get('CheckoutRequestID'),
+                    phone_number=phone_number,
+                    amount=amount,
+                    account_reference=account_reference,
+                    transaction_desc=transaction_desc,
+                    status='pending'
+                )
+
+                return {
+                    'success': True,
+                    'message': data.get('CustomerMessage', 'STK Push sent successfully'),
+                    'transaction': transaction,
+                    'checkout_request_id': data.get('CheckoutRequestID')
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': data.get('ResponseDescription', 'Failed to initiate payment')
+                }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                'success': False,
+                'message': f'Network error: {str(e)}'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error initiating payment: {str(e)}'
+            }
+
+
+class MpesaCallbackHandler:
+    """
+    Processes M-Pesa payment callbacks.
+    Following SRP: Only responsible for processing callback data.
+    """
+
+    def _update_contribution_status(self, transaction: MpesaTransaction, status: str):
+        """
+        Update contribution status when M-Pesa transaction is updated.
+        Following SRP: Separated concern for contribution updates.
+        """
+        try:
+            # Check if there's an associated contribution
+            if hasattr(transaction, 'contribution') and transaction.contribution:
+                contribution = transaction.contribution
+                contribution.status = status
+                if status == 'completed' and transaction.transaction_date:
+                    contribution.transaction_date = transaction.transaction_date
+                contribution.save()
+        except Exception as e:
+            # Log error but don't fail the callback processing
+            print(f"Error updating contribution status: {str(e)}")
+
+    def process_callback(self, callback_data: Dict) -> Dict:
+        """
+        Process M-Pesa callback data.
+
+        Args:
+            callback_data: Raw callback data from M-Pesa
+
+        Returns:
+            dict: Processing result
+        """
+        try:
+            # Extract data from callback
+            body = callback_data.get('Body', {}).get('stkCallback', {})
+
+            merchant_request_id = body.get('MerchantRequestID')
+            checkout_request_id = body.get('CheckoutRequestID')
+            result_code = str(body.get('ResultCode'))
+            result_desc = body.get('ResultDesc')
+
+            # Store callback for audit
+            callback = MpesaCallback.objects.create(
+                merchant_request_id=merchant_request_id,
+                checkout_request_id=checkout_request_id,
+                result_code=result_code,
+                result_desc=result_desc,
+                raw_data=callback_data
+            )
+
+            # Find associated transaction
+            try:
+                transaction = MpesaTransaction.objects.get(
+                    checkout_request_id=checkout_request_id
+                )
+
+                # Link callback to transaction
+                callback.transaction = transaction
+                callback.save()
+
+                # Update transaction based on result
+                if result_code == '0':
+                    # Success - extract payment details
+                    callback_metadata = body.get('CallbackMetadata', {})
+                    items = callback_metadata.get('Item', [])
+
+                    # Extract metadata
+                    metadata = {}
+                    for item in items:
+                        name = item.get('Name')
+                        value = item.get('Value')
+                        metadata[name] = value
+
+                    # Update transaction
+                    transaction.status = 'completed'
+                    transaction.result_code = result_code
+                    transaction.result_desc = result_desc
+                    transaction.mpesa_receipt_number = metadata.get('MpesaReceiptNumber')
+
+                    # Parse transaction date if available
+                    if 'TransactionDate' in metadata:
+                        trans_date_str = str(metadata['TransactionDate'])
+                        # Format: 20231115143022
+                        transaction.transaction_date = datetime.strptime(
+                            trans_date_str,
+                            '%Y%m%d%H%M%S'
+                        )
+
+                    transaction.save()
+
+                    # Update associated contribution if exists
+                    self._update_contribution_status(transaction, 'completed')
+
+                    return {
+                        'success': True,
+                        'message': 'Payment completed successfully',
+                        'transaction': transaction
+                    }
+                else:
+                    # Payment failed or cancelled
+                    transaction.status = 'failed'
+                    transaction.result_code = result_code
+                    transaction.result_desc = result_desc
+                    transaction.save()
+
+                    # Update associated contribution if exists
+                    self._update_contribution_status(transaction, 'failed')
+
+                    return {
+                        'success': False,
+                        'message': result_desc,
+                        'transaction': transaction
+                    }
+
+            except MpesaTransaction.DoesNotExist:
+                return {
+                    'success': False,
+                    'message': 'Transaction not found'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error processing callback: {str(e)}'
+            }
