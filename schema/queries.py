@@ -12,13 +12,27 @@ from .types import (
     ContributionCategoryType,
     MemberType
 )
+from .admin_queries import (
+    AdminQueries,
+    PaginatedContributions,
+    ContributionStats,
+    DashboardStats,
+    ContributionFilters,
+    PaginationInput
+)
 from contributions.models import Contribution, ContributionCategory
 from members.models import Member
 
 
 @strawberry.type
 class Query:
-    """Root Query type"""
+    """Root Query type - combines public and admin queries"""
+
+    # Admin queries - delegated to AdminQueries class
+    all_contributions: PaginatedContributions = strawberry.field(resolver=AdminQueries.all_contributions)
+    contribution_stats: ContributionStats = strawberry.field(resolver=AdminQueries.contribution_stats)
+    dashboard_stats: DashboardStats = strawberry.field(resolver=AdminQueries.dashboard_stats)
+    members_list: List[MemberType] = strawberry.field(resolver=AdminQueries.members_list)
 
     @strawberry.field
     def contribution_categories(

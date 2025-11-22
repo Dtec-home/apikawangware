@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 from django.core.validators import RegexValidator, EmailValidator
 from core.models import TimeStampedModel, SoftDeleteModel
 
@@ -13,6 +14,16 @@ class Member(TimeStampedModel, SoftDeleteModel):
     phone_validator = RegexValidator(
         regex=r'^254\d{9}$',
         message="Phone number must be in format 254XXXXXXXXX"
+    )
+
+    # Authentication - link to Django User
+    user = models.OneToOneField(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='member',
+        help_text="Linked Django user account for authentication"
     )
 
     # Personal information
@@ -76,3 +87,8 @@ class Member(TimeStampedModel, SoftDeleteModel):
             else:
                 self.member_number = '000001'
         super().save(*args, **kwargs)
+
+
+# Import OTP and UserRole models to make them available for migrations
+from .otp import OTP
+from .roles import UserRole

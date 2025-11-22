@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-p#ygm^grx&xz=y*hhac=fl#@v$vn(s7bcp9izwzej+5uumeaq+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.ngrok-free.app', '.ngrok.io', 'jointly-glorious-kid.ngrok-free.app']
 
 
 # Application definition
@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
     'strawberry.django',
 
@@ -183,3 +184,37 @@ MPESA_CONSUMER_SECRET = config('MPESA_CONSUMER_SECRET', default='')
 MPESA_BUSINESS_SHORT_CODE = config('MPESA_BUSINESS_SHORT_CODE', default='174379')
 MPESA_PASSKEY = config('MPESA_PASSKEY', default='')
 MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL', default='')
+
+# Africa's Talking Settings
+AFRICASTALKING_USERNAME = config('AFRICASTALKING_USERNAME', default='sandbox')
+AFRICASTALKING_API_KEY = config('AFRICASTALKING_API_KEY', default='')
+AFRICASTALKING_SENDER_ID = config('AFRICASTALKING_SENDER_ID', default='CHURCH')
+
+# JWT Settings
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),  # Access token valid for 7 days
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),  # Refresh token valid for 30 days
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+}
+
+# REST Framework Settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}

@@ -11,6 +11,8 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 
 from .types import ContributionResponse
+from .auth_mutations import AuthMutations, AuthResponse
+from .report_mutations import ReportMutations, ReportResponse
 from members.models import Member
 from contributions.models import Contribution, ContributionCategory
 from mpesa.services import MpesaSTKService
@@ -18,7 +20,16 @@ from mpesa.services import MpesaSTKService
 
 @strawberry.type
 class Mutation:
-    """Root Mutation type"""
+    """Root Mutation type - combines all mutations"""
+
+    # Authentication mutations
+    request_otp: AuthResponse = strawberry.field(resolver=AuthMutations.request_otp)
+    verify_otp: AuthResponse = strawberry.field(resolver=AuthMutations.verify_otp)
+    refresh_token: AuthResponse = strawberry.field(resolver=AuthMutations.refresh_token)
+    logout: AuthResponse = strawberry.field(resolver=AuthMutations.logout)
+
+    # Report mutations
+    generate_contribution_report: ReportResponse = strawberry.field(resolver=ReportMutations.generate_contribution_report)
 
     @strawberry.mutation
     def initiate_contribution(

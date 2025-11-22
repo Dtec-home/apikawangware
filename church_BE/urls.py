@@ -17,11 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.views.decorators.csrf import csrf_exempt
-from strawberry.django.views import GraphQLView
 from schema.schema import schema
+from schema.context import AuthenticatedGraphQLView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/mpesa/', include('mpesa.urls')),
-    path('graphql/', csrf_exempt(GraphQLView.as_view(schema=schema))),
+    path('graphql/', csrf_exempt(AuthenticatedGraphQLView.as_view(schema=schema))),
 ]
