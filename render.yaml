@@ -54,6 +54,12 @@ services:
         sync: false
       - key: AFRICASTALKING_SENDER_ID
         sync: false
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: "admin"
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: "kawanwgaredeployment@gmail.com"
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false
 
 databases:
   - name: church-funds-db
