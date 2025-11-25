@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: church-funds-backend
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn church_BE.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: DATABASE_URL
+        fromDatabase:
+          name: church-funds-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: DB_NAME
+        fromDatabase:
+          name: church-funds-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: church-funds-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: church-funds-db
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: church-funds-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: church-funds-db
+          property: port
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_BUSINESS_SHORT_CODE
+        value: "174379"
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        sync: false
+      - key: AFRICASTALKING_USERNAME
+        value: "sandbox"
+      - key: AFRICASTALKING_API_KEY
+        sync: false
+      - key: AFRICASTALKING_SENDER_ID
+        sync: false
+
+databases:
+  - name: church-funds-db
+    databaseName: church_funds
+    user: church_funds_user
+    plan: free

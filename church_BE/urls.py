@@ -17,8 +17,8 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.views.decorators.csrf import csrf_exempt
-from schema.schema import schema
-from schema.context import AuthenticatedGraphQLView
+from api_schema.schema import schema
+from api_schema.context import AuthenticatedGraphQLView
 
 urlpatterns = [
     path('admin/', admin.site.urls),

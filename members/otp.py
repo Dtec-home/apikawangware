@@ -12,6 +12,15 @@ from django.utils import timezone
 from django.db import models
 from django.contrib.auth.models import User
 from django.conf import settings
+import logging
+
+# Import africastalking at module level to avoid namespace conflict with local 'schema' directory
+try:
+    import africastalking
+    AFRICASTALKING_AVAILABLE = True
+except ImportError:
+    AFRICASTALKING_AVAILABLE = False
+
 
 
 class OTP(models.Model):
@@ -74,12 +83,49 @@ class SMSService:
     """
     SMS Service using Africa's Talking.
     Following SRP: Only responsible for sending SMS.
+    Singleton Pattern: Ensures we only initialize the SDK once.
     """
+    _instance = None
 
-    def __init__(self):
+    def __new__(cls):
+        """
+        Singleton Pattern: Ensures we only initialize the SDK once.
+        """
+        if cls._instance is None:
+            cls._instance = super(SMSService, cls).__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
+        """Initialize Africa's Talking SDK once"""
+        self.logger = logging.getLogger(__name__)
+
         self.username = getattr(settings, 'AFRICASTALKING_USERNAME', None)
         self.api_key = getattr(settings, 'AFRICASTALKING_API_KEY', None)
         self.sender_id = getattr(settings, 'AFRICASTALKING_SENDER_ID', None)
+
+        # Debug logging
+        print(f"\n{'='*50}")
+        print(f"🔧 SMS Service Initialization")
+        print(f"   Username: {self.username}")
+        print(f"   API Key: {'*' * 10 if self.api_key else 'None'}")
+        print(f"   Sender ID: {self.sender_id if self.sender_id else 'None (will use default)'}")
+        print(f"{'='*50}\n")
+
+        if not AFRICASTALKING_AVAILABLE:
+            self.logger.warning("AfricasTalking SDK not installed.")
+            self.sms = None
+            return
+
+        try:
+            africastalking.initialize(self.username, self.api_key)
+            self.sms = africastalking.SMS
+            self.logger.info("AfricasTalking initialized successfully.")
+            print("✅ AfricasTalking initialized successfully.")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize AfricasTalking: {e}")
+            print(f"❌ Failed to initialize AfricasTalking: {e}")
+            self.sms = None
 
     def send_sms(self, phone_number: str, message: str) -> dict:
         """
@@ -92,25 +138,41 @@ class SMSService:
         Returns:
             dict with 'success' and 'message'
         """
+        # Development mode - just log and return success
+        if settings.DEBUG and self.sms is None:
+            print(f"\n{'='*50}")
+            print(f"📱 [DEV MODE] SMS to {phone_number}:")
+            print(f"   {message}")
+            print(f"{'='*50}\n")
+            self.logger.info(f"DEBUG mode: SMS to {phone_number}. Message: {message}")
+            return {
+                'success': True,
+                'message': 'SMS sent (development mode)'
+            }
+
         try:
-            # Import Africa's Talking SDK
-            import africastalking
-
-            # Initialize SDK
-            africastalking.initialize(self.username, self.api_key)
-            sms = africastalking.SMS
-
             # Format phone number (ensure it starts with +)
             if not phone_number.startswith('+'):
                 phone_number = f'+{phone_number}'
 
-            # Send SMS
-            response = sms.send(
-                message=message,
-                recipients=[phone_number],
-                sender_id=self.sender_id
-            )
+            # Send SMS - only include sender_id if it's set
+            sms_params = {
+                'message': message,
+                'recipients': [phone_number]
+            }
 
+            # Only add sender_id if it's configured and not None
+            if self.sender_id:
+                sms_params['sender_id'] = self.sender_id
+                print(f"📤 Sending SMS WITH sender_id: {self.sender_id}")
+            else:
+                print(f"📤 Sending SMS WITHOUT sender_id (using default)")
+
+            print(f"📤 SMS Params: {sms_params}")
+
+            response = self.sms.send(**sms_params)
+
+            self.logger.info(f"SMS Response: {response}")
             print(f"📱 SMS Response: {response}")
 
             # Check if SMS was sent successfully
@@ -122,6 +184,7 @@ class SMSService:
                         'message': 'SMS sent successfully'
                     }
                 else:
+                    self.logger.error(f"SMS failed: {recipient['status']}")
                     return {
                         'success': False,
                         'message': f"SMS failed: {recipient['status']}"
@@ -132,20 +195,12 @@ class SMSService:
                     'message': 'No recipients in response'
                 }
 
-        except ImportError:
-            print("⚠️  Africa's Talking SDK not installed. Install with: pip install africastalking")
-            # For development without SMS
-            print(f"\n{'='*50}")
-            print(f"📱 [DEV MODE] SMS to {phone_number}:")
-            print(f"   {message}")
-            print(f"{'='*50}\n")
-            return {
-                'success': True,
-                'message': 'SMS sent (development mode)'
-            }
-
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            self.logger.error(f"Error sending SMS to {phone_number}: {e}\n{error_details}")
             print(f"❌ Error sending SMS: {str(e)}")
+            print(f"❌ Full error details:\n{error_details}")
             # For development - still show the message
             print(f"\n{'='*50}")
             print(f"📱 [DEV MODE] SMS to {phone_number}:")
@@ -182,6 +237,8 @@ class OTPService:
         Returns:
             dict with 'success', 'message', and optionally 'otp_code' (dev only)
         """
+        from django.db import transaction
+
         # Check if too many OTPs requested in last hour (rate limiting)
         one_hour_ago = timezone.now() - timedelta(hours=1)
         recent_otps = OTP.objects.filter(
@@ -195,31 +252,36 @@ class OTPService:
                 'message': 'Too many OTP requests. Please try again later.'
             }
 
-        # Invalidate any existing pending OTPs for this phone number
-        OTP.objects.filter(
-            phone_number=phone_number,
-            is_verified=False
-        ).update(is_verified=True)  # Mark as used to invalidate
-
         # Generate new OTP
         code = self.generate_code()
         expires_at = timezone.now() + timedelta(minutes=self.OTP_VALIDITY_MINUTES)
 
-        otp = OTP.objects.create(
-            phone_number=phone_number,
-            code=code,
-            expires_at=expires_at
-        )
+        # Wrap database operations in transaction
+        with transaction.atomic():
+            # Invalidate any existing pending OTPs for this phone number
+            OTP.objects.filter(
+                phone_number=phone_number,
+                is_verified=False
+            ).update(is_verified=True)  # Mark as used to invalidate
 
-        # Send SMS with OTP
-        message = f"Your Church Funds verification code is: {code}. Valid for {self.OTP_VALIDITY_MINUTES} minutes."
-        sms_result = self.sms_service.send_sms(phone_number, message)
+            otp = OTP.objects.create(
+                phone_number=phone_number,
+                code=code,
+                expires_at=expires_at
+            )
+
+            # Send SMS with OTP AFTER transaction commits
+            message = f"Your Church Funds verification code is: {code}. Valid for {self.OTP_VALIDITY_MINUTES} minutes."
+
+            # Use transaction.on_commit to ensure SMS is sent only after DB commit
+            transaction.on_commit(
+                lambda: self.sms_service.send_sms(phone_number, message)
+            )
 
         # Print OTP in console for development
         print(f"\n{'='*50}")
         print(f"📱 OTP for {phone_number}: {code}")
         print(f"   Valid for {self.OTP_VALIDITY_MINUTES} minutes")
-        print(f"   SMS Status: {sms_result['message']}")
         print(f"{'='*50}\n")
 
         response = {

@@ -21,12 +21,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-p#ygm^grx&xz=y*hhac=fl#@v$vn(s7bcp9izwzej+5uumeaq+'
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-p#ygm^grx&xz=y*hhac=fl#@v$vn(s7bcp9izwzej+5uumeaq+')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.ngrok-free.app', '.ngrok.io', 'jointly-glorious-kid.ngrok-free.app']
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.ngrok-free.app,.ngrok.io,.onrender.com', cast=lambda v: [s.strip() for s in v.split(',')])
 
 
 # Application definition
@@ -56,6 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -143,6 +144,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Whitenoise settings for serving static files
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -188,7 +193,7 @@ MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL', default='')
 # Africa's Talking Settings
 AFRICASTALKING_USERNAME = config('AFRICASTALKING_USERNAME', default='sandbox')
 AFRICASTALKING_API_KEY = config('AFRICASTALKING_API_KEY', default='')
-AFRICASTALKING_SENDER_ID = config('AFRICASTALKING_SENDER_ID', default='CHURCH')
+AFRICASTALKING_SENDER_ID = config('AFRICASTALKING_SENDER_ID', default=None)  # None for testing without sender ID
 
 # JWT Settings
 from datetime import timedelta
