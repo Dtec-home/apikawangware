@@ -26,7 +26,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-p#ygm^grx&xz=y*hhac=f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.ngrok-free.app,.ngrok.io,.onrender.com', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=lambda v: [s.strip() for s in v.split(',')])
 
 
 # Application definition

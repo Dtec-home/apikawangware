@@ -8,6 +8,7 @@ import strawberry
 from typing import Optional
 from rest_framework_simplejwt.tokens import RefreshToken
 from members.otp import OTPService
+from members.utils import normalize_phone_number
 
 
 @strawberry.type
@@ -35,21 +36,23 @@ class AuthMutations:
         Request OTP for phone-based authentication.
 
         Args:
-            phone_number: Phone number in format 254XXXXXXXXX
+            phone_number: Phone number in various formats (+254, 0, or 9 digits)
 
         Returns:
             AuthResponse with success status and message
         """
-        # Validate phone number format
-        if not phone_number.startswith('254') or len(phone_number) != 12:
+        # Normalize phone number to 254XXXXXXXXX format
+        try:
+            normalized_phone = normalize_phone_number(phone_number)
+        except ValueError as e:
             return AuthResponse(
                 success=False,
-                message='Invalid phone number format. Use 254XXXXXXXXX'
+                message=str(e)
             )
 
         # Create OTP
         otp_service = OTPService()
-        result = otp_service.create_otp(phone_number)
+        result = otp_service.create_otp(normalized_phone)
 
         if not result['success']:
             return AuthResponse(
@@ -75,7 +78,7 @@ class AuthMutations:
         Verify OTP and return JWT tokens.
 
         Args:
-            phone_number: Phone number in format 254XXXXXXXXX
+            phone_number: Phone number in various formats (+254, 0, or 9 digits)
             otp_code: 6-digit OTP code
 
         Returns:
@@ -94,9 +97,18 @@ class AuthMutations:
                 message='OTP code must be 6 digits'
             )
 
+        # Normalize phone number
+        try:
+            normalized_phone = normalize_phone_number(phone_number)
+        except ValueError as e:
+            return AuthResponse(
+                success=False,
+                message=str(e)
+            )
+
         # Verify OTP
         otp_service = OTPService()
-        result = otp_service.verify_otp(phone_number, otp_code)
+        result = otp_service.verify_otp(normalized_phone, otp_code)
 
         if not result['success']:
             return AuthResponse(

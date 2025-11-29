@@ -14,6 +14,7 @@ from .types import ContributionResponse
 from .auth_mutations import AuthMutations, AuthResponse
 from .report_mutations import ReportMutations, ReportResponse
 from members.models import Member
+from members.utils import normalize_phone_number
 from contributions.models import Contribution, ContributionCategory
 from mpesa.services import MpesaSTKService
 
@@ -50,14 +51,23 @@ class Mutation:
         5. Return response with checkout ID
         
         Args:
-            phone_number: Member's M-Pesa phone number (254XXXXXXXXX)
+            phone_number: Member's M-Pesa phone number (various formats accepted)
             amount: Contribution amount in KES
             category_id: ID of contribution category
-            
+
         Returns:
             ContributionResponse with success status and details
         """
         try:
+            # Normalize phone number
+            try:
+                normalized_phone = normalize_phone_number(phone_number)
+            except ValueError as e:
+                return ContributionResponse(
+                    success=False,
+                    message=str(e)
+                )
+
             # Validate and convert amount
             try:
                 amount_decimal = Decimal(amount)
@@ -74,7 +84,7 @@ class Mutation:
 
             # Find or create member by phone number
             member, created = Member.objects.get_or_create(
-                phone_number=phone_number,
+                phone_number=normalized_phone,
                 defaults={
                     'first_name': 'Guest',
                     'last_name': 'Member',
@@ -104,9 +114,9 @@ class Mutation:
             # Initiate M-Pesa STK Push
             stk_service = MpesaSTKService()
             transaction_desc = f"{category.name} - {member.full_name}"
-            
+
             result = stk_service.initiate_stk_push(
-                phone_number=phone_number,
+                phone_number=normalized_phone,
                 amount=amount_decimal,
                 account_reference=category.code,
                 transaction_desc=transaction_desc
