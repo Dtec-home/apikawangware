@@ -5,12 +5,13 @@ Following DRY: Centralized type definitions
 
 import strawberry
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date, time
 from decimal import Decimal
 
 from members.models import Member
 from contributions.models import Contribution, ContributionCategory
 from mpesa.models import MpesaTransaction
+from content.models import Announcement, Devotional, Event, YouTubeVideo
 
 
 @strawberry.django.type(Member)
@@ -87,3 +88,75 @@ class ErrorType:
     """Generic error type for better error handling"""
     field: Optional[str]
     message: str
+
+
+# Content Management Types
+
+@strawberry.django.type(Announcement)
+class AnnouncementType:
+    """GraphQL type for Announcement model"""
+    id: strawberry.ID
+    title: str
+    content: str
+    publish_date: datetime
+    is_active: bool
+    priority: int
+    created_at: datetime
+
+
+@strawberry.django.type(Devotional)
+class DevotionalType:
+    """GraphQL type for Devotional model"""
+    id: strawberry.ID
+    title: str
+    content: str
+    author: str
+    scripture_reference: str
+    publish_date: datetime
+    is_published: bool
+    is_featured: bool
+    featured_image_url: str
+    created_at: datetime
+
+
+@strawberry.django.type(Event)
+class EventType:
+    """GraphQL type for Event model"""
+    id: strawberry.ID
+    title: str
+    description: str
+    event_date: date
+    event_time: time
+    location: str
+    registration_link: str
+    is_active: bool
+    featured_image_url: str
+    created_at: datetime
+
+
+@strawberry.django.type(YouTubeVideo)
+class YouTubeVideoType:
+    """GraphQL type for YouTubeVideo model"""
+    id: strawberry.ID
+    title: str
+    video_id: str
+    description: str
+    category: str
+    publish_date: datetime
+    is_featured: bool
+    created_at: datetime
+
+    @strawberry.field
+    def embed_url(self) -> str:
+        """Get YouTube embed URL"""
+        return f"https://www.youtube.com/embed/{self.video_id}"
+
+    @strawberry.field
+    def watch_url(self) -> str:
+        """Get YouTube watch URL"""
+        return f"https://www.youtube.com/watch?v={self.video_id}"
+
+    @strawberry.field
+    def thumbnail_url(self) -> str:
+        """Get YouTube thumbnail URL"""
+        return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"

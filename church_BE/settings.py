@@ -50,7 +50,7 @@ INSTALLED_APPS = [
     'members',
     'reports',
     'notifications',
-
+    'content',
 
 ]
 
