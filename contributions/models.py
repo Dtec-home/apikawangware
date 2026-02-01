@@ -119,3 +119,7 @@ class Contribution(TimeStampedModel):
     def is_completed(self):
         """Check if contribution is completed"""
         return self.status == 'completed'
+
+
+# Import CategoryAdmin to make it available for migrations
+from .category_admin import CategoryAdmin

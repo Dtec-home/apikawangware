@@ -17,6 +17,9 @@ from .types import (
     DevotionalType,
     EventType,
     YouTubeVideoType,
+    CategoryAdminType,
+    CategoryAdminRoleType,
+    UserRoleInfo,
 )
 from .admin_queries import (
     AdminQueries,
@@ -26,6 +29,7 @@ from .admin_queries import (
     ContributionFilters,
     PaginationInput
 )
+from contributions.models import CategoryAdmin
 from contributions.models import Contribution, ContributionCategory
 from members.models import Member
 from content.models import Announcement, Devotional, Event, YouTubeVideo
@@ -40,6 +44,12 @@ class Query:
     contribution_stats: ContributionStats = strawberry.field(resolver=AdminQueries.contribution_stats)
     dashboard_stats: DashboardStats = strawberry.field(resolver=AdminQueries.dashboard_stats)
     members_list: List[MemberType] = strawberry.field(resolver=AdminQueries.members_list)
+
+    # Category admin queries - delegated to AdminQueries class
+    category_admins: List[CategoryAdminType] = strawberry.field(resolver=AdminQueries.category_admins)
+    my_category_admin_roles: List[CategoryAdminRoleType] = strawberry.field(resolver=AdminQueries.my_category_admin_roles)
+    is_category_admin: bool = strawberry.field(resolver=AdminQueries.is_category_admin)
+    current_user_role: UserRoleInfo = strawberry.field(resolver=AdminQueries.current_user_role)
 
     # Contribution queries
     @strawberry.field

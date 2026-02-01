@@ -10,9 +10,10 @@ from decimal import Decimal
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from .types import ContributionResponse
+from .types import ContributionResponse, CategoryAdminResponse
 from .auth_mutations import AuthMutations, AuthResponse
 from .report_mutations import ReportMutations, ReportResponse
+from .category_admin_mutations import CategoryAdminMutations
 from members.models import Member
 from members.utils import normalize_phone_number
 from contributions.models import Contribution, ContributionCategory
@@ -32,6 +33,10 @@ class Mutation:
     # Report mutations
     generate_contribution_report: ReportResponse = strawberry.field(resolver=ReportMutations.generate_contribution_report)
 
+    # Category admin mutations
+    assign_category_admin: CategoryAdminResponse = strawberry.field(resolver=CategoryAdminMutations.assign_category_admin)
+    remove_category_admin: CategoryAdminResponse = strawberry.field(resolver=CategoryAdminMutations.remove_category_admin)
+
     @strawberry.mutation
     def initiate_contribution(
         self,
@@ -42,14 +47,14 @@ class Mutation:
         """
         Initiate a contribution via M-Pesa STK Push.
         Following Sprint 1 spec: initiate_contribution mutation.
-        
+
         Flow:
         1. Validate member exists
         2. Validate category exists and is active
         3. Initiate M-Pesa STK Push
         4. Create contribution record
         5. Return response with checkout ID
-        
+
         Args:
             phone_number: Member's M-Pesa phone number (various formats accepted)
             amount: Contribution amount in KES

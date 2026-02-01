@@ -9,7 +9,7 @@ from datetime import datetime, date, time
 from decimal import Decimal
 
 from members.models import Member
-from contributions.models import Contribution, ContributionCategory
+from contributions.models import Contribution, ContributionCategory, CategoryAdmin
 from mpesa.models import MpesaTransaction
 from content.models import Announcement, Devotional, Event, YouTubeVideo
 
@@ -88,6 +88,70 @@ class ErrorType:
     """Generic error type for better error handling"""
     field: Optional[str]
     message: str
+
+
+# Category Admin Types
+
+@strawberry.type
+class AssignedByType:
+    """Simplified user type for assigned_by field"""
+    id: strawberry.ID
+    full_name: str
+
+
+@strawberry.django.type(CategoryAdmin)
+class CategoryAdminType:
+    """GraphQL type for CategoryAdmin model"""
+    id: strawberry.ID
+    member: MemberType
+    category: ContributionCategoryType
+    is_active: bool
+    created_at: datetime
+
+    @strawberry.field
+    def assigned_by(self) -> Optional[AssignedByType]:
+        """Get the user who assigned this admin role"""
+        if self.assigned_by_id:
+            from django.contrib.auth.models import User
+            user = User.objects.filter(id=self.assigned_by_id).first()
+            if user:
+                return AssignedByType(
+                    id=strawberry.ID(str(user.id)),
+                    full_name=f"{user.first_name} {user.last_name}".strip() or user.username
+                )
+        return None
+
+    @strawberry.field
+    def assigned_at(self) -> datetime:
+        """Alias for created_at to match frontend expectations"""
+        return self.created_at
+
+
+@strawberry.type
+class CategoryAdminRoleType:
+    """Simplified category admin role for member's own view"""
+    id: strawberry.ID
+    category: ContributionCategoryType
+    assigned_at: datetime
+    is_active: bool
+
+
+@strawberry.type
+class CategoryAdminResponse:
+    """Response type for category admin mutations"""
+    success: bool
+    message: str
+    category_admin: Optional[CategoryAdminType] = None
+
+
+@strawberry.type
+class UserRoleInfo:
+    """Information about user's role and permissions"""
+    is_authenticated: bool
+    is_staff: bool  # admin, treasurer, or pastor
+    is_category_admin: bool
+    admin_category_ids: List[str]  # IDs of categories user administers
+    admin_categories: List[ContributionCategoryType]  # Full category objects
 
 
 # Content Management Types

@@ -11,8 +11,15 @@ from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from decimal import Decimal
 
-from .types import ContributionType, MemberType, ContributionCategoryType
-from contributions.models import Contribution, ContributionCategory
+from .types import (
+    ContributionType,
+    MemberType,
+    ContributionCategoryType,
+    CategoryAdminType,
+    CategoryAdminRoleType,
+    UserRoleInfo,
+)
+from contributions.models import Contribution, ContributionCategory, CategoryAdmin
 from members.models import Member
 from members.roles import PermissionChecker
 
@@ -96,8 +103,24 @@ class AdminQueries:
         user = info.context.request.user
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
-        if not PermissionChecker.is_staff(user):
-            raise PermissionError("Requires staff privileges")
+
+        # Check if user is full staff or category admin
+        is_full_staff = PermissionChecker.is_staff(user)
+        is_category_admin = False
+        allowed_category_ids = []
+
+        if not is_full_staff:
+            # Check if user is a category admin
+            if hasattr(user, 'member') and user.member:
+                admin_categories = CategoryAdmin.objects.filter(
+                    member=user.member,
+                    is_active=True
+                ).values_list('category_id', flat=True)
+                allowed_category_ids = list(admin_categories)
+                is_category_admin = len(allowed_category_ids) > 0
+
+        if not is_full_staff and not is_category_admin:
+            raise PermissionError("Requires staff or category admin privileges")
 
         # Build queryset
         queryset = Contribution.objects.select_related(
@@ -105,6 +128,10 @@ class AdminQueries:
             'category',
             'mpesa_transaction'
         ).all()
+
+        # Filter by category for category admins
+        if is_category_admin and not is_full_staff:
+            queryset = queryset.filter(category_id__in=allowed_category_ids)
 
         # Apply filters
         if filters:
@@ -173,10 +200,30 @@ class AdminQueries:
         user = info.context.request.user
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
-        if not PermissionChecker.is_staff(user):
-            raise PermissionError("Requires staff privileges")
+
+        # Check if user is full staff or category admin
+        is_full_staff = PermissionChecker.is_staff(user)
+        is_category_admin = False
+        allowed_category_ids = []
+
+        if not is_full_staff:
+            # Check if user is a category admin
+            if hasattr(user, 'member') and user.member:
+                admin_categories = CategoryAdmin.objects.filter(
+                    member=user.member,
+                    is_active=True
+                ).values_list('category_id', flat=True)
+                allowed_category_ids = list(admin_categories)
+                is_category_admin = len(allowed_category_ids) > 0
+
+        if not is_full_staff and not is_category_admin:
+            raise PermissionError("Requires staff or category admin privileges")
 
         queryset = Contribution.objects.all()
+
+        # Filter by category for category admins
+        if is_category_admin and not is_full_staff:
+            queryset = queryset.filter(category_id__in=allowed_category_ids)
 
         if date_from:
             queryset = queryset.filter(transaction_date__gte=date_from)
@@ -225,16 +272,37 @@ class AdminQueries:
         user = info.context.request.user
         if not user.is_authenticated:
             raise PermissionError("Authentication required")
-        if not PermissionChecker.is_staff(user):
-            raise PermissionError("Requires staff privileges")
+
+        # Check if user is full staff or category admin
+        is_full_staff = PermissionChecker.is_staff(user)
+        is_category_admin = False
+        allowed_category_ids = []
+
+        if not is_full_staff:
+            # Check if user is a category admin
+            if hasattr(user, 'member') and user.member:
+                admin_categories = CategoryAdmin.objects.filter(
+                    member=user.member,
+                    is_active=True
+                ).values_list('category_id', flat=True)
+                allowed_category_ids = list(admin_categories)
+                is_category_admin = len(allowed_category_ids) > 0
+
+        if not is_full_staff and not is_category_admin:
+            raise PermissionError("Requires staff or category admin privileges")
 
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
         month_start = today_start.replace(day=1)
 
+        # Base queryset for stats
+        base_queryset = Contribution.objects.all()
+        if is_category_admin and not is_full_staff:
+            base_queryset = base_queryset.filter(category_id__in=allowed_category_ids)
+
         # Today's stats
-        today_stats = Contribution.objects.filter(
+        today_stats = base_queryset.filter(
             transaction_date__gte=today_start,
             status='completed'
         ).aggregate(
@@ -243,7 +311,7 @@ class AdminQueries:
         )
 
         # This week's stats
-        week_stats = Contribution.objects.filter(
+        week_stats = base_queryset.filter(
             transaction_date__gte=week_start,
             status='completed'
         ).aggregate(
@@ -252,7 +320,7 @@ class AdminQueries:
         )
 
         # This month's stats
-        month_stats = Contribution.objects.filter(
+        month_stats = base_queryset.filter(
             transaction_date__gte=month_start,
             status='completed'
         ).aggregate(
@@ -261,7 +329,7 @@ class AdminQueries:
         )
 
         # Total stats
-        total_stats = Contribution.objects.filter(
+        total_stats = base_queryset.filter(
             status='completed'
         ).aggregate(
             amount=Sum('amount'),
@@ -330,3 +398,171 @@ class AdminQueries:
         queryset = queryset.order_by('-created_at')[offset:offset + limit]
 
         return list(queryset)
+
+    @strawberry.field
+    def category_admins(
+        self,
+        info,
+        category_id: Optional[strawberry.ID] = None
+    ) -> List[CategoryAdminType]:
+        """
+        Get all category admins, optionally filtered by category.
+        Requires staff role.
+
+        Args:
+            category_id: Optional category ID to filter by
+
+        Returns:
+            List of category admins
+        """
+        # Check permissions
+        user = info.context.request.user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+        if not PermissionChecker.is_staff(user):
+            raise PermissionError("Requires staff privileges")
+
+        queryset = CategoryAdmin.objects.filter(
+            is_active=True
+        ).select_related('member', 'category', 'assigned_by')
+
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        return list(queryset.order_by('category__name', 'member__last_name'))
+
+    @strawberry.field
+    def my_category_admin_roles(
+        self,
+        info,
+        member_id: strawberry.ID
+    ) -> List[CategoryAdminRoleType]:
+        """
+        Get category admin roles for a specific member.
+        Authenticated users can only view their own roles.
+
+        Args:
+            member_id: Member ID to get roles for
+
+        Returns:
+            List of category admin roles
+        """
+        user = info.context.request.user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        # Get the member
+        try:
+            member = Member.objects.get(id=member_id, is_deleted=False)
+        except Member.DoesNotExist:
+            return []
+
+        # Check if user is requesting their own roles or is staff
+        is_own_roles = hasattr(user, 'member') and user.member and user.member.id == member.id
+        is_staff = PermissionChecker.is_staff(user)
+
+        if not is_own_roles and not is_staff:
+            raise PermissionError("Cannot view other members' category admin roles")
+
+        roles = CategoryAdmin.objects.filter(
+            member=member,
+            is_active=True
+        ).select_related('category')
+
+        return [
+            CategoryAdminRoleType(
+                id=strawberry.ID(str(role.id)),
+                category=role.category,
+                assigned_at=role.created_at,
+                is_active=role.is_active
+            )
+            for role in roles
+        ]
+
+    @strawberry.field
+    def is_category_admin(
+        self,
+        info,
+        category_id: strawberry.ID,
+        member_id: strawberry.ID
+    ) -> bool:
+        """
+        Check if a member is admin for a specific category.
+        Requires authentication.
+
+        Args:
+            category_id: Category ID to check
+            member_id: Member ID to check
+
+        Returns:
+            True if member is admin for the category
+        """
+        user = info.context.request.user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+
+        return CategoryAdmin.is_category_admin(
+            member_id=int(member_id),
+            category_id=int(category_id)
+        )
+
+    @strawberry.field
+    def current_user_role(self, info) -> UserRoleInfo:
+        """
+        Get current user's role information and permissions.
+        Used by frontend to determine navigation and access.
+
+        Returns:
+            UserRoleInfo with role flags and admin categories
+        """
+        user = info.context.request.user
+
+        if not user.is_authenticated:
+            return UserRoleInfo(
+                is_authenticated=False,
+                is_staff=False,
+                is_category_admin=False,
+                admin_category_ids=[],
+                admin_categories=[]
+            )
+
+        is_staff = PermissionChecker.is_staff(user)
+
+        # Get category admin info
+        admin_categories = []
+        admin_category_ids = []
+
+        # Try to get member associated with user
+        member = None
+        if hasattr(user, 'member') and user.member:
+            member = user.member
+        else:
+            # Try to find member by looking at the phone number in member table
+            # that might be linked via other means
+            try:
+                member = Member.objects.filter(
+                    user=user,
+                    is_deleted=False
+                ).first()
+            except Exception:
+                pass
+
+        if member:
+            category_admins = CategoryAdmin.objects.filter(
+                member=member,
+                is_active=True
+            ).select_related('category')
+
+            for ca in category_admins:
+                admin_category_ids.append(str(ca.category.id))
+                admin_categories.append(ca.category)
+
+        is_category_admin = len(admin_category_ids) > 0
+
+        return UserRoleInfo(
+            is_authenticated=True,
+            is_staff=is_staff,
+            is_category_admin=is_category_admin,
+            admin_category_ids=admin_category_ids,
+            admin_categories=admin_categories
+        )
