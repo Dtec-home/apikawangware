@@ -210,6 +210,16 @@ class YouTubeVideoType:
     is_featured: bool
     created_at: datetime
 
+    # YouTube API sync fields
+    source: str
+    channel_id: str
+    playlist_id: str
+    last_synced_at: Optional[datetime]
+    youtube_published_at: Optional[datetime]
+    duration: Optional[int]
+    view_count: Optional[int]
+    like_count: Optional[int]
+
     @strawberry.field
     def embed_url(self) -> str:
         """Get YouTube embed URL"""

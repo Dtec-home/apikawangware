@@ -224,3 +224,12 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
+# YouTube API Settings
+YOUTUBE_API_KEY = config('YOUTUBE_API_KEY', default='')
+YOUTUBE_CHANNEL_ID = config('YOUTUBE_CHANNEL_ID', default='')
+YOUTUBE_PLAYLIST_IDS = config(
+    'YOUTUBE_PLAYLIST_IDS',
+    default='',
+    cast=lambda v: [s.strip() for s in v.split(',')] if v else []
+)

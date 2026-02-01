@@ -165,6 +165,12 @@ class YouTubeVideo(TimeStampedModel, SoftDeleteModel):
         ('other', 'Other'),
     ]
 
+    SOURCE_CHOICES = [
+        ('manual', 'Manual Entry'),
+        ('channel', 'YouTube Channel'),
+        ('playlist', 'YouTube Playlist'),
+    ]
+
     title = models.CharField(
         max_length=200,
         help_text="Video title"
@@ -193,6 +199,50 @@ class YouTubeVideo(TimeStampedModel, SoftDeleteModel):
         help_text="Featured videos appear prominently on the landing page"
     )
 
+    # YouTube API sync fields
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default='manual',
+        db_index=True,
+        help_text="Source of the video (manual entry, channel sync, or playlist sync)"
+    )
+    channel_id = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="YouTube channel ID (populated for synced videos)"
+    )
+    playlist_id = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="YouTube playlist ID (populated for playlist-synced videos)"
+    )
+    last_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time this video was synced from YouTube API"
+    )
+    youtube_published_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Original YouTube publication date"
+    )
+    duration = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Video duration in seconds"
+    )
+    view_count = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="YouTube view count (updated on sync)"
+    )
+    like_count = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="YouTube like count (updated on sync)"
+    )
+
     class Meta:
         ordering = ['-publish_date']
         verbose_name = 'YouTube Video'
@@ -201,6 +251,7 @@ class YouTubeVideo(TimeStampedModel, SoftDeleteModel):
             models.Index(fields=['-publish_date']),
             models.Index(fields=['is_featured', '-publish_date']),
             models.Index(fields=['category', '-publish_date']),
+            models.Index(fields=['source', '-publish_date']),
         ]
 
     def __str__(self):
@@ -220,3 +271,4 @@ class YouTubeVideo(TimeStampedModel, SoftDeleteModel):
     def thumbnail_url(self):
         """Get YouTube thumbnail URL"""
         return f"https://img.youtube.com/vi/{self.video_id}/maxresdefault.jpg"
+
