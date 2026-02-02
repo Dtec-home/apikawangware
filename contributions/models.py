@@ -76,6 +76,40 @@ class Contribution(TimeStampedModel):
         help_text="Associated M-Pesa transaction"
     )
 
+    # Entry type
+    ENTRY_TYPE_CHOICES = [
+        ('mpesa', 'M-Pesa'),
+        ('manual', 'Manual Entry'),
+        ('cash', 'Cash'),
+        ('envelope', 'Envelope'),
+    ]
+
+    entry_type = models.CharField(
+        max_length=20,
+        choices=ENTRY_TYPE_CHOICES,
+        default='mpesa',
+        db_index=True,
+        help_text="How this contribution was entered into the system"
+    )
+
+    # Manual entry fields
+    manual_receipt_number = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Receipt number for manual/cash/envelope entries"
+    )
+
+    entered_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='entered_contributions',
+        help_text="Admin user who entered this contribution manually"
+    )
+
     # Contribution details
     amount = models.DecimalField(
         max_digits=10,

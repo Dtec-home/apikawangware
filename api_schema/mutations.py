@@ -10,10 +10,12 @@ from decimal import Decimal
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from .types import ContributionResponse, CategoryAdminResponse
+from .types import ContributionResponse, CategoryAdminResponse, MemberImportResponse, MemberLookupResponse
 from .auth_mutations import AuthMutations, AuthResponse
 from .report_mutations import ReportMutations, ReportResponse
 from .category_admin_mutations import CategoryAdminMutations
+from .member_import_mutations import MemberImportMutations
+from .manual_contribution_mutations import ManualContributionMutations
 from members.models import Member
 from members.utils import normalize_phone_number
 from contributions.models import Contribution, ContributionCategory
@@ -36,6 +38,14 @@ class Mutation:
     # Category admin mutations
     assign_category_admin: CategoryAdminResponse = strawberry.field(resolver=CategoryAdminMutations.assign_category_admin)
     remove_category_admin: CategoryAdminResponse = strawberry.field(resolver=CategoryAdminMutations.remove_category_admin)
+
+    # Member import mutations
+    import_members: MemberImportResponse = strawberry.field(resolver=MemberImportMutations.import_members)
+    get_member_import_template: str = strawberry.field(resolver=MemberImportMutations.get_member_import_template)
+
+    # Manual contribution mutations
+    create_manual_contribution: ContributionResponse = strawberry.field(resolver=ManualContributionMutations.create_manual_contribution)
+    lookup_member_by_phone: MemberLookupResponse = strawberry.field(resolver=ManualContributionMutations.lookup_member_by_phone)
 
     @strawberry.mutation
     def initiate_contribution(
@@ -93,7 +103,8 @@ class Mutation:
                 defaults={
                     'first_name': 'Guest',
                     'last_name': 'Member',
-                    'is_active': True
+                    'is_active': True,
+                    'is_guest': True  # Mark as guest member
                 }
             )
 

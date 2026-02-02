@@ -59,6 +59,20 @@ class Member(TimeStampedModel, SoftDeleteModel):
         db_index=True,
         help_text="Whether the member is currently active"
     )
+    is_guest = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Whether this is a guest member (auto-created from contribution)"
+    )
+
+    # Import tracking
+    import_batch_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Batch ID if member was imported via CSV/Excel"
+    )
 
     class Meta:
         ordering = ['last_name', 'first_name']

@@ -24,6 +24,7 @@ class MemberType:
     email: Optional[str]
     member_number: str
     is_active: bool
+    is_guest: bool
     created_at: datetime
 
     @strawberry.field
@@ -64,6 +65,8 @@ class ContributionType:
     category: ContributionCategoryType
     amount: str  # Decimal as string for GraphQL
     status: str
+    entry_type: str
+    manual_receipt_number: Optional[str]
     transaction_date: datetime
     notes: str
     mpesa_transaction: Optional[MpesaTransactionType]
@@ -88,6 +91,29 @@ class ErrorType:
     """Generic error type for better error handling"""
     field: Optional[str]
     message: str
+
+
+@strawberry.type
+class MemberImportResponse:
+    """Response type for member import mutation"""
+    success: bool
+    message: str
+    imported_count: int
+    skipped_count: int
+    error_count: int
+    errors: List[str]
+    duplicates: List[str]
+
+
+@strawberry.type
+class MemberLookupResponse:
+    """Response type for member lookup by phone"""
+    success: bool
+    found: bool
+    message: str
+    member: Optional[MemberType] = None
+    is_guest: bool = False
+    phone_number: Optional[str] = None
 
 
 # Category Admin Types
