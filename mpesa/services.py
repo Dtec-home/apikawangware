@@ -228,6 +228,44 @@ class MpesaCallbackHandler:
     Following SRP: Only responsible for processing callback data.
     """
 
+    def _send_contribution_receipt(self, transaction: MpesaTransaction):
+        """
+        Send receipt SMS to contributor after successful payment.
+        Following SRP: Separated concern for receipt delivery.
+        """
+        try:
+            # Check if there's an associated contribution
+            if not hasattr(transaction, 'contribution') or not transaction.contribution:
+                return
+
+            contribution = transaction.contribution
+            member = contribution.member
+
+            # Import receipt service
+            from contributions.receipt_service import ReceiptService
+
+            # Send receipt
+            receipt_service = ReceiptService()
+            result = receipt_service.send_receipt(
+                phone_number=member.phone_number,
+                member_name=member.full_name,
+                category_name=contribution.category.name,
+                amount=contribution.amount,
+                mpesa_receipt=transaction.mpesa_receipt_number,
+                transaction_date=transaction.transaction_date
+            )
+
+            if result.get('success'):
+                print(f"✅ Receipt sent to {member.full_name}")
+            else:
+                print(f"⚠️  Failed to send receipt: {result.get('message')}")
+
+        except Exception as e:
+            # Log error but don't fail the callback processing
+            print(f"⚠️  Error sending receipt: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def _update_contribution_status(self, transaction: MpesaTransaction, status: str):
         """
         Update contribution status when M-Pesa transaction is updated.
@@ -315,6 +353,9 @@ class MpesaCallbackHandler:
 
                     # Update associated contribution if exists
                     self._update_contribution_status(transaction, 'completed')
+
+                    # Send receipt SMS to contributor
+                    self._send_contribution_receipt(transaction)
 
                     return {
                         'success': True,

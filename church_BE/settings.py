@@ -191,10 +191,11 @@ MPESA_BUSINESS_SHORT_CODE = config('MPESA_BUSINESS_SHORT_CODE', default='174379'
 MPESA_PASSKEY = config('MPESA_PASSKEY', default='')
 MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL', default='')
 
-# Africa's Talking Settings
-AFRICASTALKING_USERNAME = config('AFRICASTALKING_USERNAME', default='sandbox')
-AFRICASTALKING_API_KEY = config('AFRICASTALKING_API_KEY', default='')
-AFRICASTALKING_SENDER_ID = config('AFRICASTALKING_SENDER_ID', default=None)  # None for testing without sender ID
+# Mobitech SMS API Settings
+MOBITECH_API_KEY = config('MOBITECH_API_KEY', default='')
+MOBITECH_SENDER_NAME = config('MOBITECH_SENDER_NAME', default='FULL_CIRCLE')
+MOBITECH_SERVICE_ID = config('MOBITECH_SERVICE_ID', default=0, cast=int)
+MOBITECH_API_URL = config('MOBITECH_API_URL', default='https://app.mobitechtechnologies.com//sms/sendsms')
 
 # JWT Settings
 from datetime import timedelta

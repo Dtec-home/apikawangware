@@ -1,5 +1,5 @@
 """
-OTP (One-Time Password) Management with Africa's Talking
+OTP (One-Time Password) Management with Mobitech SMS API
 Following SOLID principles:
 - SRP: Single responsibility for OTP generation and validation
 - DIP: Depends on SMS service abstraction
@@ -7,19 +7,13 @@ Following SOLID principles:
 
 import random
 import string
+import requests
 from datetime import timedelta
 from django.utils import timezone
 from django.db import models
 from django.contrib.auth.models import User
 from django.conf import settings
 import logging
-
-# Import africastalking at module level to avoid namespace conflict with local 'schema' directory
-try:
-    import africastalking
-    AFRICASTALKING_AVAILABLE = True
-except ImportError:
-    AFRICASTALKING_AVAILABLE = False
 
 
 
@@ -81,15 +75,15 @@ class OTP(models.Model):
 
 class SMSService:
     """
-    SMS Service using Africa's Talking.
+    SMS Service using Mobitech SMS API.
     Following SRP: Only responsible for sending SMS.
-    Singleton Pattern: Ensures we only initialize the SDK once.
+    Singleton Pattern: Ensures we only initialize the configuration once.
     """
     _instance = None
 
     def __new__(cls):
         """
-        Singleton Pattern: Ensures we only initialize the SDK once.
+        Singleton Pattern: Ensures we only initialize the configuration once.
         """
         if cls._instance is None:
             cls._instance = super(SMSService, cls).__new__(cls)
@@ -97,49 +91,40 @@ class SMSService:
         return cls._instance
 
     def _initialize(self):
-        """Initialize Africa's Talking SDK once"""
+        """Initialize Mobitech SMS API configuration"""
         self.logger = logging.getLogger(__name__)
 
-        self.username = getattr(settings, 'AFRICASTALKING_USERNAME', None)
-        self.api_key = getattr(settings, 'AFRICASTALKING_API_KEY', None)
-        self.sender_id = getattr(settings, 'AFRICASTALKING_SENDER_ID', None)
+        self.api_key = getattr(settings, 'MOBITECH_API_KEY', None)
+        self.sender_name = getattr(settings, 'MOBITECH_SENDER_NAME', 'FULL_CIRCLE')
+        self.service_id = getattr(settings, 'MOBITECH_SERVICE_ID', 0)
+        self.api_url = getattr(settings, 'MOBITECH_API_URL', 'https://app.mobitechtechnologies.com//sms/sendsms')
 
         # Debug logging
         print(f"\n{'='*50}")
-        print(f"🔧 SMS Service Initialization")
-        print(f"   Username: {self.username}")
-        print(f"   API Key: {'*' * 10 if self.api_key else 'None'}")
-        print(f"   Sender ID: {self.sender_id if self.sender_id else 'None (will use default)'}")
+        print(f"🔧 Mobitech SMS Service Initialization")
+        print(f"   API URL: {self.api_url}")
+        print(f"   API Key: {'*' * 20}{self.api_key[-10:] if self.api_key else 'Not set'}")
+        print(f"   Sender Name: {self.sender_name}")
+        print(f"   Service ID: {self.service_id}")
         print(f"{'='*50}\n")
 
-        if not AFRICASTALKING_AVAILABLE:
-            self.logger.warning("AfricasTalking SDK not installed.")
-            self.sms = None
-            return
-
-        try:
-            africastalking.initialize(self.username, self.api_key)
-            self.sms = africastalking.SMS
-            self.logger.info("AfricasTalking initialized successfully.")
-            print("✅ AfricasTalking initialized successfully.")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize AfricasTalking: {e}")
-            print(f"❌ Failed to initialize AfricasTalking: {e}")
-            self.sms = None
+        if not self.api_key:
+            self.logger.warning("Mobitech API key not configured.")
+            print("⚠️  Warning: Mobitech API key not configured")
 
     def send_sms(self, phone_number: str, message: str) -> dict:
         """
-        Send SMS using Africa's Talking API.
+        Send SMS using Mobitech SMS API.
 
         Args:
-            phone_number: Phone number in format +254XXXXXXXXX or 254XXXXXXXXX
+            phone_number: Phone number in format +254XXXXXXXXX, 254XXXXXXXXX, or 07XXXXXXXXX
             message: Message to send
 
         Returns:
             dict with 'success' and 'message'
         """
         # Development mode - just log and return success
-        if settings.DEBUG and self.sms is None:
+        if settings.DEBUG and not self.api_key:
             print(f"\n{'='*50}")
             print(f"📱 [DEV MODE] SMS to {phone_number}:")
             print(f"   {message}")
@@ -151,61 +136,122 @@ class SMSService:
             }
 
         try:
-            # Format phone number (ensure it starts with +)
-            if not phone_number.startswith('+'):
-                phone_number = f'+{phone_number}'
+            # Format phone number - Mobitech accepts multiple formats
+            # Ensure it has country code
+            if phone_number.startswith('0'):
+                phone_number = f'+254{phone_number[1:]}'
+            elif not phone_number.startswith('+'):
+                if not phone_number.startswith('254'):
+                    phone_number = f'+254{phone_number}'
+                else:
+                    phone_number = f'+{phone_number}'
 
-            # Send SMS - only include sender_id if it's set
-            sms_params = {
-                'message': message,
-                'recipients': [phone_number]
+            # Prepare request headers
+            headers = {
+                'h_api_key': self.api_key,
+                'Content-Type': 'application/json'
             }
 
-            # Only add sender_id if it's configured and not None
-            if self.sender_id:
-                sms_params['sender_id'] = self.sender_id
-                print(f"📤 Sending SMS WITH sender_id: {self.sender_id}")
-            else:
-                print(f"📤 Sending SMS WITHOUT sender_id (using default)")
+            # Prepare request payload
+            payload = {
+                'mobile': phone_number,
+                'response_type': 'json',
+                'sender_name': self.sender_name,
+                'service_id': self.service_id,
+                'message': message
+            }
 
-            print(f"📤 SMS Params: {sms_params}")
+            print(f"\n{'='*50}")
+            print(f"📤 Sending SMS via Mobitech")
+            print(f"   To: {phone_number}")
+            print(f"   From: {self.sender_name}")
+            print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
+            print(f"{'='*50}\n")
 
-            response = self.sms.send(**sms_params)
+            # Send request to Mobitech API
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
 
-            self.logger.info(f"SMS Response: {response}")
-            print(f"📱 SMS Response: {response}")
+            self.logger.info(f"Mobitech API Response Status: {response.status_code}")
+            self.logger.info(f"Mobitech API Response: {response.text}")
 
-            # Check if SMS was sent successfully
-            if response['SMSMessageData']['Recipients']:
-                recipient = response['SMSMessageData']['Recipients'][0]
-                if recipient['statusCode'] == 101:  # Success code
+            print(f"📥 Response Status: {response.status_code}")
+            print(f"📥 Response Body: {response.text}")
+
+            # Parse response
+            response_data = response.json()
+
+            # Check if response is a list (single SMS response format)
+            if isinstance(response_data, list) and len(response_data) > 0:
+                result = response_data[0]
+                status_code = result.get('status_code')
+
+                # Status code 1000 means success
+                if status_code == '1000':
+                    print(f"✅ SMS sent successfully!")
+                    print(f"   Message ID: {result.get('message_id')}")
+                    print(f"   Cost: KES {result.get('message_cost')}")
+                    print(f"   Balance: KES {result.get('credit_balance')}")
+
                     return {
                         'success': True,
-                        'message': 'SMS sent successfully'
+                        'message': 'SMS sent successfully',
+                        'message_id': result.get('message_id'),
+                        'cost': result.get('message_cost'),
+                        'balance': result.get('credit_balance')
                     }
                 else:
-                    self.logger.error(f"SMS failed: {recipient['status']}")
+                    error_msg = result.get('status_desc', 'Unknown error')
+                    self.logger.error(f"SMS failed: {error_msg}")
+                    print(f"❌ SMS failed: {error_msg}")
+
                     return {
                         'success': False,
-                        'message': f"SMS failed: {recipient['status']}"
+                        'message': f"SMS failed: {error_msg}",
+                        'status_code': status_code
                     }
             else:
                 return {
                     'success': False,
-                    'message': 'No recipients in response'
+                    'message': 'Unexpected response format from Mobitech API'
                 }
 
+        except requests.exceptions.RequestException as e:
+            import traceback
+            error_details = traceback.format_exc()
+            self.logger.error(f"Network error sending SMS to {phone_number}: {e}\n{error_details}")
+            print(f"❌ Network error sending SMS: {str(e)}")
+            print(f"❌ Full error details:\n{error_details}")
+
+            # For development - still show the message
+            if settings.DEBUG:
+                print(f"\n{'='*50}")
+                print(f"📱 [DEV MODE] SMS to {phone_number}:")
+                print(f"   {message}")
+                print(f"{'='*50}\n")
+
+            return {
+                'success': False,
+                'message': f'Network error sending SMS: {str(e)}'
+            }
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
             self.logger.error(f"Error sending SMS to {phone_number}: {e}\n{error_details}")
             print(f"❌ Error sending SMS: {str(e)}")
             print(f"❌ Full error details:\n{error_details}")
+
             # For development - still show the message
-            print(f"\n{'='*50}")
-            print(f"📱 [DEV MODE] SMS to {phone_number}:")
-            print(f"   {message}")
-            print(f"{'='*50}\n")
+            if settings.DEBUG:
+                print(f"\n{'='*50}")
+                print(f"📱 [DEV MODE] SMS to {phone_number}:")
+                print(f"   {message}")
+                print(f"{'='*50}\n")
+
             return {
                 'success': False,
                 'message': f'Error sending SMS: {str(e)}'
@@ -271,7 +317,7 @@ class OTPService:
             )
 
             # Send SMS with OTP AFTER transaction commits
-            message = f"Your Church Funds verification code is: {code}. Valid for {self.OTP_VALIDITY_MINUTES} minutes."
+            message = f"Your SDA Church-Kawangware verification code is: {code}. Valid for {self.OTP_VALIDITY_MINUTES} minutes."
 
             # Use transaction.on_commit to ensure SMS is sent only after DB commit
             transaction.on_commit(
