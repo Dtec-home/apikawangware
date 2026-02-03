@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.validators import MinValueValidator
 from decimal import Decimal
+import uuid
 from core.models import TimeStampedModel, SoftDeleteModel
 
 
@@ -67,13 +68,20 @@ class Contribution(TimeStampedModel):
         related_name='contributions',
         help_text="Category of this contribution"
     )
-    mpesa_transaction = models.OneToOneField(
+    mpesa_transaction = models.ForeignKey(
         'mpesa.MpesaTransaction',
         on_delete=models.PROTECT,
-        related_name='contribution',
+        related_name='contributions',
         null=True,
         blank=True,
-        help_text="Associated M-Pesa transaction"
+        help_text="Associated M-Pesa transaction (multiple contributions can share one transaction)"
+    )
+
+    # Contribution grouping
+    contribution_group_id = models.UUIDField(
+        default=uuid.uuid4,
+        db_index=True,
+        help_text="Groups multiple contributions made in a single transaction"
     )
 
     # Entry type
@@ -142,6 +150,7 @@ class Contribution(TimeStampedModel):
             models.Index(fields=['-transaction_date', 'status']),
             models.Index(fields=['member', '-transaction_date']),
             models.Index(fields=['category', '-transaction_date']),
+            models.Index(fields=['contribution_group_id', '-transaction_date']),
         ]
         verbose_name = 'Contribution'
         verbose_name_plural = 'Contributions'

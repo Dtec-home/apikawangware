@@ -10,7 +10,15 @@ from decimal import Decimal
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from .types import ContributionResponse, CategoryAdminResponse, MemberImportResponse, MemberLookupResponse
+from .types import (
+    ContributionResponse,
+    CategoryAdminResponse,
+    MemberImportResponse,
+    MemberLookupResponse,
+    CategoryAmountInput,
+    MultiContributionResponse,
+    CategoryAmountType
+)
 from .auth_mutations import AuthMutations, AuthResponse
 from .report_mutations import ReportMutations, ReportResponse
 from .category_admin_mutations import CategoryAdminMutations
@@ -172,4 +180,80 @@ class Mutation:
             return ContributionResponse(
                 success=False,
                 message=f"Error processing contribution: {str(e)}"
+            )
+
+    @strawberry.mutation
+    def initiate_multi_category_contribution(
+        self,
+        phone_number: str,
+        contributions: list['CategoryAmountInput']
+    ) -> 'MultiContributionResponse':
+        """
+        Initiate a multi-category contribution via M-Pesa STK Push.
+        Allows members to contribute to multiple categories in a single transaction.
+
+        Flow:
+        1. Validate all contributions (categories and amounts)
+        2. Calculate total amount
+        3. Initiate M-Pesa STK Push with total
+        4. Create contribution records for each category
+        5. Link all contributions with same group ID and M-Pesa transaction
+
+        Args:
+            phone_number: Member's M-Pesa phone number
+            contributions: List of category-amount pairs
+
+        Returns:
+            MultiContributionResponse with success status and details
+        """
+        from contributions.multi_contribution_service import MultiContributionService
+
+        try:
+            # Convert strawberry inputs to dicts
+            contribution_dicts = [
+                {
+                    'categoryId': c.category_id,
+                    'amount': c.amount
+                }
+                for c in contributions
+            ]
+
+            # Use service to process multi-contribution
+            service = MultiContributionService()
+            result = service.create_multi_contribution(
+                phone_number=phone_number,
+                contributions=contribution_dicts
+            )
+
+            if not result['success']:
+                return MultiContributionResponse(
+                    success=False,
+                    message=result['message']
+                )
+
+            # Build response with contribution details
+            contribution_details = [
+                CategoryAmountType(
+                    category_id=strawberry.ID(str(c.category.id)),
+                    category_name=c.category.name,
+                    category_code=c.category.code,
+                    amount=str(c.amount)
+                )
+                for c in result['contributions']
+            ]
+
+            return MultiContributionResponse(
+                success=True,
+                message=result['message'],
+                total_amount=str(result['total_amount']),
+                contribution_group_id=result['contribution_group_id'],
+                contributions=contribution_details,
+                checkout_request_id=result['checkout_request_id'],
+                transaction_id=strawberry.ID(str(result['mpesa_transaction'].id))
+            )
+
+        except Exception as e:
+            return MultiContributionResponse(
+                success=False,
+                message=f"Error processing multi-category contribution: {str(e)}"
             )
