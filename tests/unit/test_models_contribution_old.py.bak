@@ -1,0 +1,256 @@
+"""
+Unit tests for Contribution and ContributionCategory models.
+"""
+
+import pytest
+from decimal import Decimal
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
+from django.utils import timezone
+from contributions.models import Contribution, ContributionCategory
+from tests.utils.factories import (
+    ContributionFactory,
+    ContributionCategoryFactory,
+    MemberFactory,
+    MpesaTransactionFactory
+)
+
+
+@pytest.mark.unit
+class TestContributionCategoryModel:
+    """Test cases for ContributionCategory model."""
+
+    def test_create_category_with_valid_data(self, db):
+        """Test creating a category with valid data."""
+        category = ContributionCategoryFactory(
+            name='Tithe',
+            code='TITHE',
+            description='10% of income',
+            is_active=True
+        )
+
+        assert category.id is not None
+        assert category.name == 'Tithe'
+        assert category.code == 'TITHE'
+        assert category.description == '10% of income'
+        assert category.is_active is True
+
+    def test_category_str_representation(self, db):
+        """Test __str__ method returns correct format."""
+        category = ContributionCategoryFactory(name='Offering', code='OFFER')
+
+        assert str(category) == 'Offering (OFFER)'
+
+    def test_category_name_must_be_unique(self, db):
+        """Test that category names must be unique."""
+        ContributionCategoryFactory(name='Tithe')
+
+        with pytest.raises(IntegrityError):
+            ContributionCategoryFactory(name='Tithe')
+
+    def test_category_code_must_be_unique(self, db):
+        """Test that category codes must be unique."""
+        ContributionCategoryFactory(code='TITHE')
+
+        with pytest.raises(IntegrityError):
+            ContributionCategoryFactory(code='TITHE')
+
+    def test_inactive_category(self, db):
+        """Test creating an inactive category."""
+        category = ContributionCategoryFactory(is_active=False)
+
+        assert category.is_active is False
+
+    def test_soft_delete_category(self, db):
+        """Test soft delete functionality."""
+        category = ContributionCategoryFactory()
+
+        category.is_deleted = True
+        category.save()
+
+        assert ContributionCategory.objects.filter(id=category.id).exists()
+        assert not ContributionCategory.objects.filter(
+            id=category.id,
+            is_deleted=False
+        ).exists()
+
+    def test_category_contributions_relationship(self, db):
+        """Test reverse relationship to contributions."""
+        category = ContributionCategoryFactory()
+        contribution1 = ContributionFactory(category=category)
+        contribution2 = ContributionFactory(category=category)
+
+        assert category.contributions.count() == 2
+
+
+@pytest.mark.unit
+class TestContributionModel:
+    """Test cases for Contribution model."""
+
+    def test_create_contribution_with_valid_data(self, db):
+        """Test creating a contribution with valid data."""
+        member = MemberFactory()
+        category = ContributionCategoryFactory()
+
+        contribution = ContributionFactory(
+            member=member,
+            category=category,
+            amount=Decimal('1000.00'),
+            status='pending',
+            entry_type='mpesa'
+        )
+
+        assert contribution.id is not None
+        assert contribution.member == member
+        assert contribution.category == category
+        assert contribution.amount == Decimal('1000.00')
+        assert contribution.status == 'pending'
+        assert contribution.entry_type == 'mpesa'
+
+    def test_contribution_str_representation(self, db):
+        """Test __str__ method returns correct format."""
+        member = MemberFactory(first_name='John', last_name='Doe')
+        category = ContributionCategoryFactory(name='Tithe')
+        contribution = ContributionFactory(
+            member=member,
+            category=category,
+            amount=Decimal('5000.00')
+        )
+
+        assert str(contribution) == 'John Doe - Tithe - KES 5000.00'
+
+    def test_contribution_status_choices(self, db):
+        """Test different contribution statuses."""
+        statuses = ['pending', 'completed', 'failed']
+
+        for status in statuses:
+            contribution = ContributionFactory(status=status)
+            assert contribution.status == status
+
+    def test_contribution_entry_type_choices(self, db):
+        """Test different entry types."""
+        entry_types = ['mpesa', 'manual', 'cash', 'envelope']
+
+        for entry_type in entry_types:
+            contribution = ContributionFactory(entry_type=entry_type)
+            assert contribution.entry_type == entry_type
+
+    def test_is_completed_property(self, db):
+        """Test is_completed property."""
+        pending = ContributionFactory(status='pending')
+        completed = ContributionFactory(status='completed')
+        failed = ContributionFactory(status='failed')
+
+        assert pending.is_completed is False
+        assert completed.is_completed is True
+        assert failed.is_completed is False
+
+    def test_contribution_with_mpesa_transaction(self, db):
+        """Test contribution linked to M-Pesa transaction."""
+        transaction = MpesaTransactionFactory()
+        contribution = ContributionFactory(mpesa_transaction=transaction)
+
+        assert contribution.mpesa_transaction == transaction
+        assert contribution in transaction.contributions.all()
+
+    def test_contribution_without_mpesa_transaction(self, db):
+        """Test manual contribution without M-Pesa transaction."""
+        contribution = ContributionFactory(
+            entry_type='manual',
+            mpesa_transaction=None
+        )
+
+        assert contribution.mpesa_transaction is None
+
+    def test_contribution_group_id(self, db):
+        """Test contribution grouping for multi-category contributions."""
+        import uuid
+
+        group_id = uuid.uuid4()
+        contribution1 = ContributionFactory(contribution_group_id=group_id)
+        contribution2 = ContributionFactory(contribution_group_id=group_id)
+
+        assert contribution1.contribution_group_id == group_id
+        assert contribution2.contribution_group_id == group_id
+
+        # Query by group ID
+        grouped = Contribution.objects.filter(contribution_group_id=group_id)
+        assert grouped.count() == 2
+
+    def test_manual_contribution_fields(self, db):
+        """Test manual contribution specific fields."""
+        from django.contrib.auth.models import User
+
+        user = User.objects.create_user(username='admin')
+        contribution = ContributionFactory(
+            entry_type='manual',
+            manual_receipt_number='MAN-001',
+            entered_by=user,
+            notes='Cash payment received'
+        )
+
+        assert contribution.manual_receipt_number == 'MAN-001'
+        assert contribution.entered_by == user
+        assert contribution.notes == 'Cash payment received'
+
+    def test_amount_validation_minimum(self, db):
+        """Test that amount must be at least 1.00."""
+        contribution = Contribution(
+            member=MemberFactory(),
+            category=ContributionCategoryFactory(),
+            amount=Decimal('0.50'),  # Below minimum
+            transaction_date=timezone.now()
+        )
+
+        with pytest.raises(ValidationError):
+            contribution.full_clean()
+
+    def test_amount_precision(self, db):
+        """Test amount decimal precision (2 decimal places)."""
+        contribution = ContributionFactory(amount=Decimal('1234.56'))
+
+        assert contribution.amount == Decimal('1234.56')
+
+    def test_transaction_date_is_set(self, db):
+        """Test that transaction_date is required and set."""
+        contribution = ContributionFactory()
+
+        assert contribution.transaction_date is not None
+
+    def test_timestamps_are_set(self, db):
+        """Test that created_at and updated_at are automatically set."""
+        contribution = ContributionFactory()
+
+        assert contribution.created_at is not None
+        assert contribution.updated_at is not None
+
+    def test_contribution_ordering(self, db):
+        """Test contributions are ordered by transaction_date descending."""
+        from datetime import timedelta
+
+        now = timezone.now()
+        old = ContributionFactory(transaction_date=now - timedelta(days=2))
+        recent = ContributionFactory(transaction_date=now)
+
+        contributions = list(Contribution.objects.all())
+
+        assert contributions[0] == recent
+        assert contributions[1] == old
+
+    def test_multiple_contributions_same_transaction(self, db):
+        """Test multiple contributions can share same M-Pesa transaction."""
+        transaction = MpesaTransactionFactory()
+        category1 = ContributionCategoryFactory(name='Tithe')
+        category2 = ContributionCategoryFactory(name='Offering')
+
+        contribution1 = ContributionFactory(
+            mpesa_transaction=transaction,
+            category=category1
+        )
+        contribution2 = ContributionFactory(
+            mpesa_transaction=transaction,
+            category=category2
+        )
+
+        assert transaction.contributions.count() == 2
+        assert contribution1.mpesa_transaction == contribution2.mpesa_transaction
