@@ -185,39 +185,43 @@ class SMSService:
             # Parse response
             response_data = response.json()
 
-            # Check if response is a list (single SMS response format)
-            if isinstance(response_data, list) and len(response_data) > 0:
+            # Mobitech API can return either a dict or a list
+            # Handle both formats
+            if isinstance(response_data, dict):
+                result = response_data
+            elif isinstance(response_data, list) and len(response_data) > 0:
                 result = response_data[0]
-                status_code = result.get('status_code')
-
-                # Status code 1000 means success
-                if status_code == '1000':
-                    print(f"✅ SMS sent successfully!")
-                    print(f"   Message ID: {result.get('message_id')}")
-                    print(f"   Cost: KES {result.get('message_cost')}")
-                    print(f"   Balance: KES {result.get('credit_balance')}")
-
-                    return {
-                        'success': True,
-                        'message': 'SMS sent successfully',
-                        'message_id': result.get('message_id'),
-                        'cost': result.get('message_cost'),
-                        'balance': result.get('credit_balance')
-                    }
-                else:
-                    error_msg = result.get('status_desc', 'Unknown error')
-                    self.logger.error(f"SMS failed: {error_msg}")
-                    print(f"❌ SMS failed: {error_msg}")
-
-                    return {
-                        'success': False,
-                        'message': f"SMS failed: {error_msg}",
-                        'status_code': status_code
-                    }
             else:
                 return {
                     'success': False,
                     'message': 'Unexpected response format from Mobitech API'
+                }
+
+            status_code = result.get('status_code')
+
+            # Status code 1000 means success
+            if status_code == '1000' or status_code == 1000:
+                print(f"✅ SMS sent successfully!")
+                print(f"   Message ID: {result.get('message_id')}")
+                print(f"   Cost: KES {result.get('message_cost')}")
+                print(f"   Balance: KES {result.get('credit_balance')}")
+
+                return {
+                    'success': True,
+                    'message': 'SMS sent successfully',
+                    'message_id': result.get('message_id'),
+                    'cost': result.get('message_cost'),
+                    'balance': result.get('credit_balance')
+                }
+            else:
+                error_msg = result.get('status_desc', 'Unknown error')
+                self.logger.error(f"SMS failed: {error_msg}")
+                print(f"❌ SMS failed: {error_msg}")
+
+                return {
+                    'success': False,
+                    'message': f"SMS failed: {error_msg}",
+                    'status_code': status_code
                 }
 
         except requests.exceptions.RequestException as e:
