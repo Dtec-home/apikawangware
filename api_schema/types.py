@@ -86,6 +86,36 @@ class ContributionResponse:
     checkout_request_id: Optional[str] = None
 
 
+# Multi-Category Contribution Types
+
+@strawberry.input
+class CategoryAmountInput:
+    """Input type for category-amount pair in multi-category contributions"""
+    category_id: strawberry.ID
+    amount: str  # Decimal as string
+
+
+@strawberry.type
+class CategoryAmountType:
+    """Response type for category-amount pair"""
+    category_id: strawberry.ID
+    category_name: str
+    category_code: str
+    amount: str  # Decimal as string
+
+
+@strawberry.type
+class MultiContributionResponse:
+    """Response type for multi-category contribution mutation"""
+    success: bool
+    message: str
+    total_amount: Optional[str] = None  # Decimal as string
+    contribution_group_id: Optional[str] = None
+    contributions: Optional[List[CategoryAmountType]] = None
+    checkout_request_id: Optional[str] = None
+    transaction_id: Optional[strawberry.ID] = None
+
+
 @strawberry.type
 class ErrorType:
     """Generic error type for better error handling"""

@@ -147,6 +147,25 @@ class Query:
             return None
 
     @strawberry.field
+    def payment_status(
+        self,
+        checkout_request_id: str
+    ) -> str:
+        """
+        Check the status of an M-Pesa payment by checkout request ID.
+        Returns: 'pending', 'completed', 'failed', or 'not_found'
+        """
+        from mpesa.models import MpesaTransaction
+
+        try:
+            transaction = MpesaTransaction.objects.get(
+                checkout_request_id=checkout_request_id
+            )
+            return transaction.status
+        except MpesaTransaction.DoesNotExist:
+            return 'not_found'
+
+    @strawberry.field
     def member_by_phone(
         self,
         phone_number: str

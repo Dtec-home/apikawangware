@@ -232,33 +232,70 @@ class MpesaCallbackHandler:
         """
         Send receipt SMS to contributor after successful payment.
         Following SRP: Separated concern for receipt delivery.
+        Handles both single and multi-category contributions.
         """
         try:
-            # Check if there's an associated contribution
-            if not hasattr(transaction, 'contribution') or not transaction.contribution:
-                return
-
-            contribution = transaction.contribution
-            member = contribution.member
-
             # Import receipt service
             from contributions.receipt_service import ReceiptService
 
-            # Send receipt
-            receipt_service = ReceiptService()
-            result = receipt_service.send_receipt(
-                phone_number=member.phone_number,
-                member_name=member.full_name,
-                category_name=contribution.category.name,
-                amount=contribution.amount,
-                mpesa_receipt=transaction.mpesa_receipt_number,
-                transaction_date=transaction.transaction_date
-            )
+            # Get all contributions associated with this transaction
+            contributions = transaction.contributions.all()
 
-            if result.get('success'):
-                print(f"✅ Receipt sent to {member.full_name}")
+            if not contributions.exists():
+                print("⚠️  No contributions found for this transaction")
+                return
+
+            # Get member from first contribution (all should have same member)
+            member = contributions.first().member
+            receipt_service = ReceiptService()
+
+            # Check if this is a multi-category contribution
+            if contributions.count() > 1:
+                # Multi-category contribution - send consolidated receipt
+                print(f"📧 Sending multi-category receipt for {contributions.count()} categories")
+
+                # Build contributions list for receipt
+                contrib_list = []
+                total_amount = Decimal('0.00')
+
+                for contrib in contributions:
+                    contrib_list.append({
+                        'category_name': contrib.category.name,
+                        'amount': contrib.amount
+                    })
+                    total_amount += contrib.amount
+
+                # Send consolidated receipt
+                result = receipt_service.send_multi_category_receipt(
+                    phone_number=member.phone_number,
+                    member_name=member.full_name,
+                    contributions=contrib_list,
+                    total_amount=total_amount,
+                    mpesa_receipt=transaction.mpesa_receipt_number,
+                    transaction_date=transaction.transaction_date
+                )
+
+                if result.get('success'):
+                    print(f"✅ Multi-category receipt sent to {member.full_name}")
+                else:
+                    print(f"⚠️  Failed to send multi-category receipt: {result.get('message')}")
             else:
-                print(f"⚠️  Failed to send receipt: {result.get('message')}")
+                # Single contribution - send regular receipt
+                contribution = contributions.first()
+
+                result = receipt_service.send_receipt(
+                    phone_number=member.phone_number,
+                    member_name=member.full_name,
+                    category_name=contribution.category.name,
+                    amount=contribution.amount,
+                    mpesa_receipt=transaction.mpesa_receipt_number,
+                    transaction_date=transaction.transaction_date
+                )
+
+                if result.get('success'):
+                    print(f"✅ Receipt sent to {member.full_name}")
+                else:
+                    print(f"⚠️  Failed to send receipt: {result.get('message')}")
 
         except Exception as e:
             # Log error but don't fail the callback processing
