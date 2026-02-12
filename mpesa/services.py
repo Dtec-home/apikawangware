@@ -309,13 +309,16 @@ class MpesaCallbackHandler:
         Following SRP: Separated concern for contribution updates.
         """
         try:
-            # Check if there's an associated contribution
-            if hasattr(transaction, 'contribution') and transaction.contribution:
-                contribution = transaction.contribution
-                contribution.status = status
+            # Update all contributions linked to this transaction
+            contributions = transaction.contributions.all()
+            if contributions.exists():
+                update_fields = {'status': status}
                 if status == 'completed' and transaction.transaction_date:
-                    contribution.transaction_date = transaction.transaction_date
-                contribution.save()
+                    update_fields['transaction_date'] = transaction.transaction_date
+                contributions.update(**update_fields)
+                print(f"✅ Updated {contributions.count()} contribution(s) to '{status}'")
+            else:
+                print(f"⚠️  No contributions found for transaction {transaction.checkout_request_id}")
         except Exception as e:
             # Log error but don't fail the callback processing
             print(f"Error updating contribution status: {str(e)}")
