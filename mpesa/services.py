@@ -6,14 +6,18 @@ Following SOLID principles:
 """
 
 import base64
+import logging
 import requests
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Optional
 from decouple import config
 from django.utils import timezone
+from django.utils.timezone import make_aware
 
 from .models import MpesaTransaction, MpesaCallback
+
+logger = logging.getLogger(__name__)
 
 
 class MpesaAuthService:
@@ -307,21 +311,27 @@ class MpesaCallbackHandler:
         """
         Update contribution status when M-Pesa transaction is updated.
         Following SRP: Separated concern for contribution updates.
+        Raises on failure so the caller can log/handle accordingly.
         """
-        try:
-            # Update all contributions linked to this transaction
-            contributions = transaction.contributions.all()
-            if contributions.exists():
-                update_fields = {'status': status}
-                if status == 'completed' and transaction.transaction_date:
-                    update_fields['transaction_date'] = transaction.transaction_date
-                contributions.update(**update_fields)
-                print(f"✅ Updated {contributions.count()} contribution(s) to '{status}'")
-            else:
-                print(f"⚠️  No contributions found for transaction {transaction.checkout_request_id}")
-        except Exception as e:
-            # Log error but don't fail the callback processing
-            print(f"Error updating contribution status: {str(e)}")
+        # Update all contributions linked to this transaction
+        contributions = transaction.contributions.all()
+        if contributions.exists():
+            update_fields = {'status': status}
+            if status == 'completed' and transaction.transaction_date:
+                update_fields['transaction_date'] = transaction.transaction_date
+            updated_count = contributions.update(**update_fields)
+            print(f"✅ Updated {updated_count} contribution(s) to '{status}'")
+            logger.info(
+                f"Updated {updated_count} contribution(s) to '{status}' "
+                f"for transaction {transaction.checkout_request_id}"
+            )
+        else:
+            msg = (
+                f"No contributions found for transaction {transaction.checkout_request_id}. "
+                f"Contributions may not have been linked correctly."
+            )
+            print(f"⚠️  {msg}")
+            logger.warning(msg)
 
     def process_callback(self, callback_data: Dict) -> Dict:
         """
@@ -381,18 +391,24 @@ class MpesaCallbackHandler:
                     transaction.mpesa_receipt_number = metadata.get('MpesaReceiptNumber')
 
                     # Parse transaction date if available
+                    # Use make_aware() so Django's USE_TZ=True is respected
                     if 'TransactionDate' in metadata:
                         trans_date_str = str(metadata['TransactionDate'])
                         # Format: 20231115143022
-                        transaction.transaction_date = datetime.strptime(
-                            trans_date_str,
-                            '%Y%m%d%H%M%S'
-                        )
+                        naive_dt = datetime.strptime(trans_date_str, '%Y%m%d%H%M%S')
+                        transaction.transaction_date = make_aware(naive_dt)
 
                     transaction.save()
 
-                    # Update associated contribution if exists
-                    self._update_contribution_status(transaction, 'completed')
+                    # Update associated contributions
+                    try:
+                        self._update_contribution_status(transaction, 'completed')
+                    except Exception as contrib_err:
+                        logger.error(
+                            f"Failed to update contribution status for transaction "
+                            f"{transaction.checkout_request_id}: {contrib_err}",
+                            exc_info=True
+                        )
 
                     # Send receipt SMS to contributor
                     self._send_contribution_receipt(transaction)
@@ -409,8 +425,15 @@ class MpesaCallbackHandler:
                     transaction.result_desc = result_desc
                     transaction.save()
 
-                    # Update associated contribution if exists
-                    self._update_contribution_status(transaction, 'failed')
+                    # Update associated contributions
+                    try:
+                        self._update_contribution_status(transaction, 'failed')
+                    except Exception as contrib_err:
+                        logger.error(
+                            f"Failed to update contribution status to 'failed' for transaction "
+                            f"{transaction.checkout_request_id}: {contrib_err}",
+                            exc_info=True
+                        )
 
                     return {
                         'success': False,

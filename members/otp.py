@@ -354,16 +354,30 @@ class OTPService:
             dict with 'success', 'message', 'user', and 'member' if successful
         """
         try:
-            # Find the most recent OTP for this phone number
+            # Find the most recent pending OTP for this phone number
             otp = OTP.objects.filter(
                 phone_number=phone_number,
-                code=code
+                is_verified=False
             ).order_by('-created_at').first()
 
             if not otp:
                 return {
                     'success': False,
-                    'message': 'Invalid OTP code'
+                    'message': 'No pending OTP found. Please request a new one.'
+                }
+
+            # Check if code matches (increment attempts on mismatch)
+            if otp.code != code:
+                otp.increment_attempts()
+                remaining = max(0, 3 - otp.verification_attempts)
+                if remaining == 0:
+                    return {
+                        'success': False,
+                        'message': 'Too many failed attempts. Please request a new OTP.'
+                    }
+                return {
+                    'success': False,
+                    'message': f'Invalid OTP code. {remaining} attempt(s) remaining.'
                 }
 
             # Check if OTP is valid
@@ -378,14 +392,6 @@ class OTPService:
                 return {
                     'success': False,
                     'message': message
-                }
-
-            # Verify code matches
-            if otp.code != code:
-                otp.increment_attempts()
-                return {
-                    'success': False,
-                    'message': 'Invalid OTP code'
                 }
 
             # Mark OTP as verified
@@ -417,12 +423,15 @@ class OTPService:
                 }
             )
 
-            # Link user to member if needed
-            if not hasattr(member, 'user') or member.user is None or member.user != user:
-                # Add user field to member model if it doesn't exist
-                # This will be handled in the model migration
+            # Set unusable password for newly created users (auth is OTP only)
+            if created:
+                user.set_unusable_password()
+                user.save(update_fields=['password'])
 
-                print(f"✅ User authenticated: {user.username}")
+            # Link user to member if not already linked
+            if member.user is None or member.user != user:
+                member.user = user
+                member.save(update_fields=['user'])
 
             return {
                 'success': True,

@@ -147,6 +147,27 @@ class Query:
             return None
 
     @strawberry.field
+    def contributions_by_checkout_id(
+        self,
+        checkout_request_id: str
+    ) -> List[ContributionType]:
+        """
+        Get all contributions associated with a specific M-Pesa checkout request ID.
+        Used by the confirmation page for multi-category contributions where no
+        single contribution ID is available.
+        """
+        from mpesa.models import MpesaTransaction
+        try:
+            transaction = MpesaTransaction.objects.get(
+                checkout_request_id=checkout_request_id
+            )
+            return transaction.contributions.select_related(
+                'member', 'category', 'mpesa_transaction'
+            ).all()
+        except MpesaTransaction.DoesNotExist:
+            return []
+
+    @strawberry.field
     def payment_status(
         self,
         checkout_request_id: str

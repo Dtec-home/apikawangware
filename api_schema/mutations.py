@@ -13,6 +13,8 @@ from django.core.exceptions import ValidationError
 from .types import (
     ContributionResponse,
     CategoryAdminResponse,
+    CategoryResponse,
+    MemberResponse,
     MemberImportResponse,
     MemberLookupResponse,
     CategoryAmountInput,
@@ -22,7 +24,9 @@ from .types import (
 from .auth_mutations import AuthMutations, AuthResponse
 from .report_mutations import ReportMutations, ReportResponse
 from .category_admin_mutations import CategoryAdminMutations
+from .category_mutations import CategoryMutations
 from .member_import_mutations import MemberImportMutations
+from .member_mutations import MemberMutations
 from .manual_contribution_mutations import ManualContributionMutations
 from members.models import Member
 from members.utils import normalize_phone_number
@@ -50,6 +54,16 @@ class Mutation:
     # Member import mutations
     import_members: MemberImportResponse = strawberry.field(resolver=MemberImportMutations.import_members)
     get_member_import_template: str = strawberry.field(resolver=MemberImportMutations.get_member_import_template)
+
+    # Category CRUD mutations
+    create_category: CategoryResponse = strawberry.field(resolver=CategoryMutations.create_category)
+    update_category: CategoryResponse = strawberry.field(resolver=CategoryMutations.update_category)
+    delete_category: CategoryResponse = strawberry.field(resolver=CategoryMutations.delete_category)
+
+    # Member CRUD mutations
+    update_member: MemberResponse = strawberry.field(resolver=MemberMutations.update_member)
+    toggle_member_status: MemberResponse = strawberry.field(resolver=MemberMutations.toggle_member_status)
+    delete_member: MemberResponse = strawberry.field(resolver=MemberMutations.delete_member)
 
     # Manual contribution mutations
     create_manual_contribution: ContributionResponse = strawberry.field(resolver=ManualContributionMutations.create_manual_contribution)

@@ -90,7 +90,6 @@ class MultiContributionService:
         """Calculate total amount from validated contributions."""
         return sum(c['amount'] for c in validated_contributions)
 
-    @transaction.atomic
     def create_multi_contribution(
         self,
         phone_number: str,
@@ -179,20 +178,24 @@ class MultiContributionService:
             mpesa_transaction = stk_result['transaction']
 
             # Create contribution records for each category
+            # Wrapped in atomic block to ensure all-or-nothing DB writes.
+            # NOTE: The STK push above is intentionally OUTSIDE this atomic block
+            # because it's an external HTTP call that cannot be rolled back.
             contribution_records = []
-            for validated_contrib in validated:
-                contribution = Contribution.objects.create(
-                    member=member,
-                    category=validated_contrib['category'],
-                    mpesa_transaction=mpesa_transaction,
-                    contribution_group_id=group_id,
-                    amount=validated_contrib['amount'],
-                    status='pending',
-                    entry_type='mpesa',
-                    transaction_date=timezone.now(),
-                    notes=f"Multi-category contribution - Group {group_id}"
-                )
-                contribution_records.append(contribution)
+            with transaction.atomic():
+                for validated_contrib in validated:
+                    contribution = Contribution.objects.create(
+                        member=member,
+                        category=validated_contrib['category'],
+                        mpesa_transaction=mpesa_transaction,
+                        contribution_group_id=group_id,
+                        amount=validated_contrib['amount'],
+                        status='pending',
+                        entry_type='mpesa',
+                        transaction_date=timezone.now(),
+                        notes=f"Multi-category contribution - Group {group_id}"
+                    )
+                    contribution_records.append(contribution)
 
             return {
                 'success': True,

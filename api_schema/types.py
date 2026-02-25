@@ -201,6 +201,22 @@ class CategoryAdminResponse:
 
 
 @strawberry.type
+class CategoryResponse:
+    """Response type for category CRUD mutations"""
+    success: bool
+    message: str
+    category: Optional[ContributionCategoryType] = None
+
+
+@strawberry.type
+class MemberResponse:
+    """Response type for member CRUD mutations"""
+    success: bool
+    message: str
+    member: Optional[MemberType] = None
+
+
+@strawberry.type
 class UserRoleInfo:
     """Information about user's role and permissions"""
     is_authenticated: bool

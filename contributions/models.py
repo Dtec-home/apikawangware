@@ -88,7 +88,7 @@ class Contribution(TimeStampedModel):
     ENTRY_TYPE_CHOICES = [
         ('mpesa', 'M-Pesa'),
         ('manual', 'Manual Entry'),
-        ('cash', 'Cash'),
+        ('cash', 'Local Evangelism/Loose Money'),
         ('envelope', 'Envelope'),
     ]
 
