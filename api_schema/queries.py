@@ -24,7 +24,9 @@ from .types import (
 from .admin_queries import (
     AdminQueries,
     PaginatedContributions,
+    PaginatedC2BTransactions,
     ContributionStats,
+    C2BTransactionStats,
     DashboardStats,
     ContributionFilters,
     PaginationInput
@@ -44,6 +46,10 @@ class Query:
     contribution_stats: ContributionStats = strawberry.field(resolver=AdminQueries.contribution_stats)
     dashboard_stats: DashboardStats = strawberry.field(resolver=AdminQueries.dashboard_stats)
     members_list: List[MemberType] = strawberry.field(resolver=AdminQueries.members_list)
+
+    # C2B queries - delegated to AdminQueries class
+    c2b_transactions: PaginatedC2BTransactions = strawberry.field(resolver=AdminQueries.c2b_transactions)
+    c2b_transaction_stats: C2BTransactionStats = strawberry.field(resolver=AdminQueries.c2b_transaction_stats)
 
     # Category admin queries - delegated to AdminQueries class
     category_admins: List[CategoryAdminType] = strawberry.field(resolver=AdminQueries.category_admins)

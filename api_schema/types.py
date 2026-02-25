@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from members.models import Member
 from contributions.models import Contribution, ContributionCategory, CategoryAdmin
-from mpesa.models import MpesaTransaction
+from mpesa.models import MpesaTransaction, C2BTransaction
 from content.models import Announcement, Devotional, Event, YouTubeVideo
 
 
@@ -55,6 +55,30 @@ class MpesaTransactionType:
     mpesa_receipt_number: Optional[str]
     transaction_date: Optional[datetime]
     result_desc: Optional[str]
+
+
+@strawberry.django.type(C2BTransaction)
+class C2BTransactionType:
+    """GraphQL type for C2B Transaction model"""
+    id: strawberry.ID
+    trans_id: str
+    trans_time: datetime
+    trans_amount: str  # Decimal as string for GraphQL
+    business_short_code: str
+    bill_ref_number: str
+    msisdn: str
+    first_name: str
+    middle_name: str
+    last_name: str
+    status: str
+    validation_result: str
+    created_at: datetime
+
+    @strawberry.field
+    def customer_name(self) -> str:
+        """Full name from M-Pesa"""
+        parts = [self.first_name, self.middle_name, self.last_name]
+        return ' '.join(p for p in parts if p).strip() or 'Unknown'
 
 
 @strawberry.django.type(Contribution)

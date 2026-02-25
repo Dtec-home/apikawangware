@@ -13,7 +13,7 @@ import uuid
 
 from members.models import Member
 from contributions.models import Contribution, ContributionCategory
-from mpesa.models import MpesaTransaction, MpesaCallback
+from mpesa.models import MpesaTransaction, MpesaCallback, C2BTransaction, C2BCallback
 from members.otp import OTP
 
 fake = Faker()
@@ -125,6 +125,50 @@ class ContributionFactory(DjangoModelFactory):
     status = 'pending'
     transaction_date = factory.LazyFunction(timezone.now)
     notes = ''
+
+
+class C2BTransactionFactory(DjangoModelFactory):
+    """Factory for C2BTransaction model."""
+
+    class Meta:
+        model = C2BTransaction
+
+    trans_id = factory.LazyFunction(lambda: f'C2B_{uuid.uuid4().hex[:8].upper()}')
+    trans_time = factory.LazyFunction(timezone.now)
+    trans_amount = factory.LazyFunction(lambda: Decimal(str(fake.random_int(min=100, max=10000))))
+    business_short_code = '174379'
+    bill_ref_number = 'TITHE'
+    msisdn = factory.Sequence(lambda n: f'2547{str(30000000 + n).zfill(8)}')
+    first_name = factory.Faker('first_name')
+    middle_name = ''
+    last_name = factory.Faker('last_name')
+    org_account_balance = None
+    status = 'received'
+    validation_result = ''
+
+
+class C2BCallbackFactory(DjangoModelFactory):
+    """Factory for C2BCallback model."""
+
+    class Meta:
+        model = C2BCallback
+
+    callback_type = 'confirmation'
+    trans_id = factory.LazyFunction(lambda: f'C2B_{uuid.uuid4().hex[:8].upper()}')
+    raw_data = factory.LazyFunction(lambda: {
+        'TransactionType': 'Pay Bill',
+        'TransID': f'C2B_{uuid.uuid4().hex[:8].upper()}',
+        'TransTime': '20240101120000',
+        'TransAmount': '500.00',
+        'BusinessShortCode': '174379',
+        'BillRefNumber': 'TITHE',
+        'MSISDN': '254708374149',
+        'FirstName': 'John',
+        'MiddleName': '',
+        'LastName': 'Doe'
+    })
+    processed = False
+    transaction = None
 
 
 class OTPFactory(DjangoModelFactory):
