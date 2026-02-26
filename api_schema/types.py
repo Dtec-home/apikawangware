@@ -72,6 +72,8 @@ class C2BTransactionType:
     last_name: str
     status: str
     validation_result: str
+    matched_category_code: str
+    match_method: str
     created_at: datetime
 
     @strawberry.field
@@ -238,6 +240,15 @@ class MemberResponse:
     success: bool
     message: str
     member: Optional[MemberType] = None
+
+
+@strawberry.type
+class C2BResolveResponse:
+    """Response type for resolving an unmatched C2B transaction"""
+    success: bool
+    message: str
+    transaction: Optional[C2BTransactionType] = None
+    contribution: Optional[ContributionType] = None
 
 
 @strawberry.type

@@ -115,7 +115,14 @@ class C2BTransaction(TimeStampedModel):
     STATUS_CHOICES = [
         ('received', 'Received'),
         ('processed', 'Processed'),
+        ('unmatched', 'Unmatched'),
         ('failed', 'Failed'),
+    ]
+
+    MATCH_METHOD_CHOICES = [
+        ('exact', 'Exact'),
+        ('fuzzy', 'Fuzzy'),
+        ('manual', 'Manual'),
     ]
 
     phone_validator = RegexValidator(
@@ -179,6 +186,17 @@ class C2BTransaction(TimeStampedModel):
         max_length=20,
         blank=True,
         help_text="Result of validation: accepted or rejected"
+    )
+    matched_category_code = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Category code that was actually matched (useful for fuzzy matches)"
+    )
+    match_method = models.CharField(
+        max_length=10,
+        choices=MATCH_METHOD_CHOICES,
+        blank=True,
+        help_text="How the category was matched: exact, fuzzy, or manual"
     )
 
     class Meta:

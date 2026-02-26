@@ -64,25 +64,22 @@ def c2b_validation(request):
     """
     Handle M-Pesa C2B validation callbacks.
     Called by Safaricom BEFORE processing a Pay Bill payment.
-    Returns ResultCode 0 to accept or 1 to reject the payment.
+
+    Policy: Always accept (ResultCode 0). Never reject money.
+    Unmatched BillRefNumbers are handled during confirmation.
     """
     try:
         callback_data = json.loads(request.body.decode('utf-8'))
         logger.info(f"C2B validation callback received: {callback_data}")
 
         service = C2BContributionService()
-        result = service.validate_c2b_payment(callback_data)
+        service.validate_c2b_payment(callback_data)
 
-        if result['accept']:
-            return JsonResponse({
-                'ResultCode': 0,
-                'ResultDesc': 'Accepted'
-            })
-        else:
-            return JsonResponse({
-                'ResultCode': 1,
-                'ResultDesc': result['message']
-            })
+        # Always accept — never reject money
+        return JsonResponse({
+            'ResultCode': 0,
+            'ResultDesc': 'Accepted'
+        })
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in C2B validation callback: {str(e)}")
@@ -93,10 +90,11 @@ def c2b_validation(request):
 
     except Exception as e:
         logger.error(f"Error processing C2B validation: {str(e)}")
+        # Still accept even on internal errors — never reject money
         return JsonResponse({
-            'ResultCode': 1,
-            'ResultDesc': 'Internal error'
-        }, status=500)
+            'ResultCode': 0,
+            'ResultDesc': 'Accepted'
+        })
 
 
 @csrf_exempt

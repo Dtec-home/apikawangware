@@ -1,6 +1,7 @@
 """
 Tests for C2B confirmation endpoint and full processing flow.
 Tests the complete flow: callback -> member match -> contribution creation -> receipt.
+Includes fuzzy matching and unmatched flow tests.
 """
 
 import json
@@ -67,6 +68,8 @@ class TestC2BConfirmation:
         assert c2b_tx.trans_amount == Decimal('500.00')
         assert c2b_tx.msisdn == '254708374149'
         assert c2b_tx.status == 'processed'
+        assert c2b_tx.match_method == 'exact'
+        assert c2b_tx.matched_category_code == 'TITHE'
 
         # Verify Contribution was created
         contribution = Contribution.objects.get(member=member)
@@ -130,23 +133,50 @@ class TestC2BConfirmation:
         assert Contribution.objects.count() == 1
 
     @patch('mpesa.c2b_service.ReceiptService')
-    def test_unknown_category_fails_gracefully(self, mock_receipt_cls):
-        """Payment with unknown BillRefNumber should fail but still record transaction."""
+    def test_unknown_category_becomes_unmatched(self, mock_receipt_cls):
+        """Payment with unknown BillRefNumber should be accepted but flagged as unmatched."""
         MemberFactory(phone_number='254708374149')
 
         service = C2BContributionService()
-        payload = _make_confirmation_payload(bill_ref='NOSUCHCAT', trans_id='NOCAT001')
+        payload = _make_confirmation_payload(bill_ref='XYZABC', trans_id='NOCAT001')
         result = service.process_c2b_confirmation(payload)
 
-        assert result['success'] is False
-        assert 'Category not found' in result['message']
+        # Should succeed (money accepted) but no contribution created
+        assert result['success'] is True
+        assert 'unmatched' in result['message']
 
-        # Transaction should still be recorded (but with failed status)
+        # Transaction should be recorded with unmatched status
         c2b_tx = C2BTransaction.objects.get(trans_id='NOCAT001')
-        assert c2b_tx.status == 'failed'
+        assert c2b_tx.status == 'unmatched'
+        assert c2b_tx.match_method == ''
+        assert c2b_tx.matched_category_code == ''
 
         # No contribution should be created
         assert Contribution.objects.count() == 0
+
+        # Receipt should NOT be sent
+        mock_receipt_cls.return_value.send_receipt.assert_not_called()
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_unmatched_still_creates_member(self, mock_receipt_cls):
+        """Unmatched payments should still create/match the member."""
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(
+            bill_ref='XYZABC',
+            trans_id='UNMATCH_MEMBER',
+            msisdn='254711111111',
+            first_name='Grace',
+            last_name='Muthoni',
+        )
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        # Member should still be created
+        member = Member.objects.get(phone_number='254711111111')
+        assert member.first_name == 'Grace'
+        assert member.last_name == 'Muthoni'
+        assert member.is_guest is True
 
     @patch('mpesa.c2b_service.ReceiptService')
     def test_receipt_sent_after_confirmation(self, mock_receipt_cls):
@@ -263,3 +293,118 @@ class TestC2BConfirmation:
         # Transaction and contribution should exist
         assert C2BTransaction.objects.filter(trans_id='SMSFAIL001').exists()
         assert Contribution.objects.count() == 1
+
+
+@pytest.mark.django_db
+class TestC2BFuzzyMatching:
+    """Tests for fuzzy matching of BillRefNumber to category codes."""
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_fuzzy_match_tith_to_tithe(self, mock_receipt_cls):
+        """'TITH' should fuzzy match to 'TITHE'."""
+        mock_receipt_cls.return_value.send_receipt.return_value = {'success': True}
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Tithe', code='TITHE', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='FUZZY001', bill_ref='TITH')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='FUZZY001')
+        assert c2b_tx.status == 'processed'
+        assert c2b_tx.match_method == 'fuzzy'
+        assert c2b_tx.matched_category_code == 'TITHE'
+
+        contribution = Contribution.objects.first()
+        assert contribution is not None
+        assert contribution.category.code == 'TITHE'
+        assert 'fuzzy matched' in contribution.notes
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_fuzzy_match_ofering_to_offer(self, mock_receipt_cls):
+        """'OFERING' should fuzzy match to 'OFFER'."""
+        mock_receipt_cls.return_value.send_receipt.return_value = {'success': True}
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Offering', code='OFFER', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='FUZZY002', bill_ref='OFERING')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='FUZZY002')
+        assert c2b_tx.status == 'processed'
+        assert c2b_tx.match_method == 'fuzzy'
+        assert c2b_tx.matched_category_code == 'OFFER'
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_fuzzy_match_bildng_to_build(self, mock_receipt_cls):
+        """'BILDNG' should fuzzy match to 'BUILD'."""
+        mock_receipt_cls.return_value.send_receipt.return_value = {'success': True}
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Building Fund', code='BUILD', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='FUZZY003', bill_ref='BILDNG')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='FUZZY003')
+        assert c2b_tx.match_method == 'fuzzy'
+        assert c2b_tx.matched_category_code == 'BUILD'
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_no_fuzzy_match_for_gibberish(self, mock_receipt_cls):
+        """Completely unrelated input should not fuzzy match anything."""
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Tithe', code='TITHE', is_active=True)
+        ContributionCategoryFactory(name='Offering', code='OFFER', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='FUZZY004', bill_ref='XYZABC')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='FUZZY004')
+        assert c2b_tx.status == 'unmatched'
+        assert c2b_tx.match_method == ''
+        assert Contribution.objects.count() == 0
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_exact_match_preferred_over_fuzzy(self, mock_receipt_cls):
+        """Exact match should be used when available, not fuzzy."""
+        mock_receipt_cls.return_value.send_receipt.return_value = {'success': True}
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Tithe', code='TITHE', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='EXACT001', bill_ref='TITHE')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='EXACT001')
+        assert c2b_tx.match_method == 'exact'
+        assert c2b_tx.matched_category_code == 'TITHE'
+
+    @patch('mpesa.c2b_service.ReceiptService')
+    def test_fuzzy_match_case_insensitive(self, mock_receipt_cls):
+        """Fuzzy matching should work regardless of input case."""
+        mock_receipt_cls.return_value.send_receipt.return_value = {'success': True}
+        MemberFactory(phone_number='254708374149')
+        ContributionCategoryFactory(name='Tithe', code='TITHE', is_active=True)
+
+        service = C2BContributionService()
+        payload = _make_confirmation_payload(trans_id='FUZZYCASE', bill_ref='tith')
+        result = service.process_c2b_confirmation(payload)
+
+        assert result['success'] is True
+
+        c2b_tx = C2BTransaction.objects.get(trans_id='FUZZYCASE')
+        assert c2b_tx.match_method == 'fuzzy'
+        assert c2b_tx.matched_category_code == 'TITHE'

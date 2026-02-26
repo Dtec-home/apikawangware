@@ -28,6 +28,8 @@ from .category_mutations import CategoryMutations
 from .member_import_mutations import MemberImportMutations
 from .member_mutations import MemberMutations
 from .manual_contribution_mutations import ManualContributionMutations
+from .c2b_mutations import C2BMutations
+from .types import C2BResolveResponse
 from members.models import Member
 from members.utils import normalize_phone_number
 from contributions.models import Contribution, ContributionCategory
@@ -68,6 +70,9 @@ class Mutation:
     # Manual contribution mutations
     create_manual_contribution: ContributionResponse = strawberry.field(resolver=ManualContributionMutations.create_manual_contribution)
     lookup_member_by_phone: MemberLookupResponse = strawberry.field(resolver=ManualContributionMutations.lookup_member_by_phone)
+
+    # C2B mutations
+    resolve_unmatched_c2b: C2BResolveResponse = strawberry.field(resolver=C2BMutations.resolve_unmatched_c2b)
 
     @strawberry.mutation
     def initiate_contribution(

@@ -85,6 +85,7 @@ class C2BTransactionStats:
     total_amount: str
     total_count: int
     processed_count: int
+    unmatched_count: int
     failed_count: int
 
 
@@ -599,12 +600,14 @@ class AdminQueries:
             total_count=Count('id')
         )
         processed_count = queryset.filter(status='processed').count()
+        unmatched_count = queryset.filter(status='unmatched').count()
         failed_count = queryset.filter(status='failed').count()
 
         return C2BTransactionStats(
             total_amount=str(total_stats['total_amount'] or Decimal('0.00')),
             total_count=total_stats['total_count'] or 0,
             processed_count=processed_count,
+            unmatched_count=unmatched_count,
             failed_count=failed_count
         )
 

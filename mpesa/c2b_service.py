@@ -5,10 +5,11 @@ Following SOLID principles:
 - DIP: Depends on service abstractions (ReceiptService, normalize_phone_number)
 """
 
+import difflib
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 from django.db import transaction
 from django.utils.timezone import make_aware
@@ -35,9 +36,11 @@ class C2BContributionService:
         Validate an incoming C2B payment before it is processed by M-Pesa.
         Called by the validation endpoint.
 
-        Checks:
-        - BillRefNumber maps to an active ContributionCategory
-        - Amount is at least KES 1.00
+        Policy: Never reject money. Always accept so the payment goes through.
+        Unmatched BillRefNumbers will be flagged during confirmation for
+        manual resolution by a treasurer.
+
+        Only rejects if amount is below KES 1.00 (defensive check).
 
         Args:
             callback_data: Raw C2B validation callback payload
@@ -56,7 +59,7 @@ class C2BContributionService:
             processed=False
         )
 
-        # Validate amount
+        # Validate amount (only hard rejection rule)
         try:
             amount = Decimal(amount_str)
             if amount < Decimal('1.00'):
@@ -72,28 +75,8 @@ class C2BContributionService:
                 'message': f'Invalid amount: {amount_str}'
             }
 
-        # Validate BillRefNumber maps to active category
-        if not bill_ref:
-            logger.warning("C2B validation rejected: empty BillRefNumber")
-            return {
-                'accept': False,
-                'message': 'BillRefNumber is required'
-            }
-
-        category = ContributionCategory.objects.filter(
-            code__iexact=bill_ref,
-            is_active=True,
-            is_deleted=False
-        ).first()
-
-        if not category:
-            logger.warning(f"C2B validation rejected: unknown BillRefNumber '{bill_ref}'")
-            return {
-                'accept': False,
-                'message': f'Unknown account reference: {bill_ref}'
-            }
-
-        logger.info(f"C2B validation accepted: {bill_ref} -> {category.name}, KES {amount}")
+        # Always accept — unmatched BillRefNumbers handled during confirmation
+        logger.info(f"C2B validation accepted: BillRefNumber='{bill_ref}', KES {amount}")
         return {
             'accept': True,
             'message': 'Accepted'
@@ -140,6 +123,61 @@ class C2BContributionService:
                 'message': f'Error processing confirmation: {str(e)}'
             }
 
+    def _match_category(self, bill_ref_number: str) -> Tuple[Optional[ContributionCategory], str]:
+        """
+        Match a BillRefNumber to a ContributionCategory using a multi-step strategy:
+        1. Exact match (case-insensitive)
+        2. Fuzzy match using difflib (cutoff=0.6, only if exactly 1 match)
+        3. No match → return None
+
+        Args:
+            bill_ref_number: The BillRefNumber from the M-Pesa callback
+
+        Returns:
+            Tuple of (category or None, match_method: 'exact'|'fuzzy'|'')
+        """
+        if not bill_ref_number:
+            return None, ''
+
+        # 1. Exact match (case-insensitive)
+        category = ContributionCategory.objects.filter(
+            code__iexact=bill_ref_number,
+            is_active=True,
+            is_deleted=False
+        ).first()
+
+        if category:
+            return category, 'exact'
+
+        # 2. Fuzzy match against all active category codes
+        active_categories = ContributionCategory.objects.filter(
+            is_active=True,
+            is_deleted=False
+        )
+        code_map = {cat.code.upper(): cat for cat in active_categories}
+        all_codes = list(code_map.keys())
+
+        if not all_codes:
+            return None, ''
+
+        matches = difflib.get_close_matches(
+            bill_ref_number.upper(),
+            all_codes,
+            n=1,
+            cutoff=0.6
+        )
+
+        if len(matches) == 1:
+            matched_code = matches[0]
+            category = code_map[matched_code]
+            logger.info(
+                f"C2B fuzzy match: '{bill_ref_number}' -> '{matched_code}' ({category.name})"
+            )
+            return category, 'fuzzy'
+
+        # 3. No match
+        return None, ''
+
     def _process_confirmation(self, callback_data: Dict, callback_record: C2BCallback) -> Dict:
         """Internal method to process a confirmed C2B payment."""
         # Parse callback fields
@@ -176,6 +214,9 @@ class C2BContributionService:
         except ValueError:
             normalized_phone = msisdn
 
+        # Match BillRefNumber to category (exact or fuzzy)
+        category, match_method = self._match_category(bill_ref_number)
+
         with transaction.atomic():
             # Create C2BTransaction record
             c2b_transaction = C2BTransaction.objects.create(
@@ -189,37 +230,45 @@ class C2BContributionService:
                 middle_name=middle_name,
                 last_name=last_name,
                 org_account_balance=org_balance,
-                status='received'
+                status='received',
+                matched_category_code=category.code if category else '',
+                match_method=match_method,
             )
 
             # Link callback to transaction
             callback_record.transaction = c2b_transaction
             callback_record.save(update_fields=['transaction'])
 
-            # Match MSISDN to member
+            # Always match/create member (even for unmatched payments)
             member = self._match_or_create_member(
                 normalized_phone, first_name, middle_name, last_name
             )
 
-            # Match BillRefNumber to category
-            category = ContributionCategory.objects.filter(
-                code__iexact=bill_ref_number,
-                is_active=True,
-                is_deleted=False
-            ).first()
-
             if not category:
-                # Still record the transaction but mark as failed
-                c2b_transaction.status = 'failed'
+                # No match (even after fuzzy) — flag as unmatched
+                c2b_transaction.status = 'unmatched'
                 c2b_transaction.save(update_fields=['status'])
                 callback_record.processed = True
                 callback_record.save(update_fields=['processed'])
-                logger.warning(f"C2B category not found for BillRefNumber: {bill_ref_number}")
+                logger.warning(
+                    f"C2B unmatched: BillRefNumber '{bill_ref_number}' has no match. "
+                    f"Trans {trans_id}, KES {trans_amount}, {normalized_phone}. "
+                    f"Awaiting manual resolution."
+                )
                 return {
-                    'success': False,
-                    'message': f'Category not found for reference: {bill_ref_number}',
+                    'success': True,
+                    'message': f'Payment accepted but category unmatched for reference: {bill_ref_number}',
                     'transaction': c2b_transaction
                 }
+
+            # Build contribution notes with match info
+            if match_method == 'fuzzy':
+                notes = (
+                    f'C2B Pay Bill (fuzzy matched {bill_ref_number} → {category.code}) '
+                    f'- Trans ID: {trans_id}'
+                )
+            else:
+                notes = f'C2B Pay Bill - Trans ID: {trans_id}'
 
             # Create Contribution record
             contribution = Contribution.objects.create(
@@ -229,7 +278,7 @@ class C2BContributionService:
                 status='completed',
                 entry_type='mpesa',
                 transaction_date=trans_time,
-                notes=f'C2B Pay Bill - Trans ID: {trans_id}'
+                notes=notes,
             )
 
             # Update transaction status
@@ -245,7 +294,7 @@ class C2BContributionService:
 
         logger.info(
             f"C2B contribution recorded: {member.full_name} -> {category.name} "
-            f"KES {trans_amount} (Trans: {trans_id})"
+            f"KES {trans_amount} (Trans: {trans_id}, match: {match_method})"
         )
 
         return {
