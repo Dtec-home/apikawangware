@@ -214,6 +214,7 @@ class ContributionReportGenerator(ReportGenerator):
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         category_id: Optional[int] = None,
+        category_ids: Optional[List[int]] = None,
         member_id: Optional[int] = None,
         report_type: str = 'custom'
     ) -> ReportData:
@@ -223,7 +224,8 @@ class ContributionReportGenerator(ReportGenerator):
         Args:
             date_from: Start date
             date_to: End date
-            category_id: Filter by category
+            category_id: Filter by single category (legacy)
+            category_ids: Filter by multiple categories
             member_id: Filter by member
             report_type: Type of report (daily, weekly, monthly, custom)
 
@@ -260,7 +262,10 @@ class ContributionReportGenerator(ReportGenerator):
             queryset = queryset.filter(transaction_date__gte=date_from)
         if date_to:
             queryset = queryset.filter(transaction_date__lte=date_to)
-        if category_id:
+        # Support both single category_id (legacy) and multiple category_ids
+        if category_ids:
+            queryset = queryset.filter(category_id__in=category_ids)
+        elif category_id:
             queryset = queryset.filter(category_id=category_id)
         if member_id:
             queryset = queryset.filter(member_id=member_id)

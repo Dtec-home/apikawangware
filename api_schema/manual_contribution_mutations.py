@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .types import ContributionResponse, MemberLookupResponse
 from contributions.manual_contribution_service import ManualContributionService
+from members.roles import PermissionChecker
 
 
 @strawberry.type
@@ -53,11 +54,11 @@ class ManualContributionMutations:
                 message="Authentication required"
             )
 
-        # Check if user is staff/admin
-        if not user.is_staff:
+        # Check if user has staff role via custom permission system
+        if not PermissionChecker.is_staff(user):
             return ContributionResponse(
                 success=False,
-                message="Admin access required"
+                message="Staff access required"
             )
 
         # Parse amount
@@ -130,11 +131,11 @@ class ManualContributionMutations:
                 found=False
             )
 
-        # Check if user is staff/admin
-        if not user.is_staff:
+        # Check if user has staff role via custom permission system
+        if not PermissionChecker.is_staff(user):
             return MemberLookupResponse(
                 success=False,
-                message="Admin access required",
+                message="Staff access required",
                 found=False
             )
 

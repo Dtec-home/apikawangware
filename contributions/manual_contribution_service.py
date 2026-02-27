@@ -11,6 +11,9 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth.models import User
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import Contribution, ContributionCategory
 from members.models import Member
@@ -125,7 +128,8 @@ class ManualContributionService:
                 receipt_service = ReceiptService()
 
                 # Generate receipt number if not provided
-                final_receipt_number = receipt_number or f"MAN-{contribution.id}"
+                date_str = transaction_date.strftime('%Y%m%d')
+                final_receipt_number = receipt_number or f"RCP-{date_str}-{contribution.id:04d}"
 
                 # Update contribution with generated receipt number if needed
                 if not receipt_number:

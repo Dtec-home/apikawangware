@@ -15,6 +15,7 @@ from tests.utils.factories import (
     ContributionCategoryFactory,
     ContributionFactory,
     MpesaTransactionFactory,
+    C2BTransactionFactory,
     OTPFactory,
     UserFactory,
 )
@@ -273,7 +274,7 @@ def cleanup_test_data(django_db_blocker):
 
         # Clean up in reverse order of dependencies
         from contributions.models import Contribution, ContributionCategory
-        from mpesa.models import MpesaCallback, MpesaTransaction
+        from mpesa.models import MpesaCallback, MpesaTransaction, C2BTransaction, C2BCallback
         from members.models import Member
         from members.otp import OTP
         from django.contrib.auth.models import User
@@ -285,6 +286,10 @@ def cleanup_test_data(django_db_blocker):
             # Delete M-Pesa callbacks and transactions
             MpesaCallback.objects.all().delete()
             MpesaTransaction.objects.all().delete()
+
+            # Delete C2B callbacks and transactions
+            C2BCallback.objects.all().delete()
+            C2BTransaction.objects.all().delete()
 
             # Delete OTPs
             OTP.objects.all().delete()

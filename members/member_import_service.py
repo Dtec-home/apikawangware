@@ -8,15 +8,24 @@ Following SOLID principles:
 
 import csv
 import io
+import logging
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 from datetime import datetime
 from django.db import transaction
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from openpyxl import load_workbook
 
 from .models import Member
 from .utils import normalize_phone_number
+
+logger = logging.getLogger(__name__)
+
+# Maximum records per import to prevent timeouts
+MAX_IMPORT_RECORDS = 5000
+# Batch size for database operations
+BATCH_SIZE = 100
 
 
 class MemberImportValidator:
@@ -97,6 +106,7 @@ class MemberImportParser:
             cleaned_row = {
                 key.strip().lower(): value.strip() if value else ''
                 for key, value in row.items()
+                if key is not None
             }
             records.append(cleaned_row)
 
@@ -133,6 +143,7 @@ class MemberImportParser:
             if any(record.values()):
                 records.append(record)
 
+        workbook.close()
         return records
 
 
@@ -151,7 +162,8 @@ class MemberImportService:
         self,
         file_content: str,
         file_type: str = 'csv',
-        batch_id: Optional[str] = None
+        batch_id: Optional[str] = None,
+        send_notifications: bool = False
     ) -> Dict:
         """
         Import members from CSV or Excel file.
@@ -160,17 +172,10 @@ class MemberImportService:
             file_content: File content (string for CSV, base64 for Excel)
             file_type: 'csv' or 'excel'
             batch_id: Optional batch identifier for tracking
+            send_notifications: Whether to send welcome SMS (default False)
 
         Returns:
-            Dictionary with import results:
-            {
-                'success': bool,
-                'imported_count': int,
-                'skipped_count': int,
-                'error_count': int,
-                'errors': List[str],
-                'duplicates': List[str]
-            }
+            Dictionary with import results
         """
         # Parse file based on type
         try:
@@ -191,6 +196,7 @@ class MemberImportService:
                     'duplicates': []
                 }
         except Exception as e:
+            logger.error(f"Error parsing import file: {e}")
             return {
                 'success': False,
                 'message': f"Error parsing file: {str(e)}",
@@ -201,20 +207,49 @@ class MemberImportService:
                 'duplicates': []
             }
 
+        # Check record count limit
+        if len(records) > MAX_IMPORT_RECORDS:
+            return {
+                'success': False,
+                'message': f"File contains {len(records)} records. Maximum allowed is {MAX_IMPORT_RECORDS}.",
+                'imported_count': 0,
+                'skipped_count': 0,
+                'error_count': 0,
+                'errors': [f"Too many records ({len(records)}). Please split into smaller files of {MAX_IMPORT_RECORDS} or fewer."],
+                'duplicates': []
+            }
+
+        if len(records) == 0:
+            return {
+                'success': False,
+                'message': "No records found in file",
+                'imported_count': 0,
+                'skipped_count': 0,
+                'error_count': 0,
+                'errors': ["File contains no data rows"],
+                'duplicates': []
+            }
+
         # Generate batch ID if not provided
         if not batch_id:
             batch_id = f"import_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         # Process records
-        return self._process_records(records, batch_id)
+        return self._process_records(records, batch_id, send_notifications)
 
-    def _process_records(self, records: List[Dict], batch_id: str) -> Dict:
+    def _process_records(
+        self,
+        records: List[Dict],
+        batch_id: str,
+        send_notifications: bool = False
+    ) -> Dict:
         """
-        Process and import member records with transaction support.
+        Process and import member records in batches with transaction support.
 
         Args:
             records: List of member data dictionaries
             batch_id: Batch identifier
+            send_notifications: Whether to send welcome SMS
 
         Returns:
             Import results dictionary
@@ -225,9 +260,12 @@ class MemberImportService:
         errors = []
         duplicates = []
 
-        # Get existing phone numbers for duplicate detection
+        # Get existing phone numbers and usernames for duplicate detection
         existing_phones = set(
             Member.objects.values_list('phone_number', flat=True)
+        )
+        existing_usernames = set(
+            User.objects.values_list('username', flat=True)
         )
 
         # Validate all records first
@@ -253,71 +291,54 @@ class MemberImportService:
             existing_phones.add(phone)
             validated_records.append(record)
 
-        # Import validated records in a transaction
-        imported_members = []
-        try:
-            with transaction.atomic():
-                for record in validated_records:
-                    member = self._create_member(record, batch_id)
-                    imported_members.append(member)
-                    imported_count += 1
+        # Process validated records in batches
+        all_imported_members = []
+        batch_errors = []
 
-            # Send welcome SMS to imported members (don't fail if SMS fails)
-            sms_success_count = 0
-            sms_failed_count = 0
+        for batch_start in range(0, len(validated_records), BATCH_SIZE):
+            batch = validated_records[batch_start:batch_start + BATCH_SIZE]
+            batch_members = []
 
             try:
-                from members.otp import SMSService
-                sms_service = SMSService()
+                with transaction.atomic():
+                    for record in batch:
+                        try:
+                            member = self._create_member(record, batch_id)
+                            # Also create a Django User for this member
+                            user = self._create_user_for_member(
+                                member, existing_usernames
+                            )
+                            if user:
+                                member.user = user
+                                member.save(update_fields=['user'])
+                                existing_usernames.add(user.username)
+                            batch_members.append(member)
+                            imported_count += 1
+                        except Exception as e:
+                            row_num = batch_start + batch.index(record) + 2
+                            batch_errors.append(
+                                f"Row {row_num}: Error creating member - {str(e)}"
+                            )
+                            error_count += 1
 
-                print(f"\n{'='*50}")
-                print(f"📧 Sending Welcome Messages")
-                print(f"   Total members: {len(imported_members)}")
-                print(f"{'='*50}\n")
-
-                for member in imported_members:
-                    try:
-                        # Format welcome message
-                        message = (
-                            f"Welcome to SDA Church-Kawangware, {member.first_name}!\n\n"
-                            f"Your member number is: {member.member_number}\n\n"
-                            f"You can now make contributions via M-Pesa.\n\n"
-                            f"God bless you!"
-                        )
-
-                        # Send SMS
-                        result = sms_service.send_sms(member.phone_number, message)
-
-                        if result.get('success'):
-                            sms_success_count += 1
-                            print(f"✅ Welcome SMS sent to {member.full_name}")
-                        else:
-                            sms_failed_count += 1
-                            print(f"⚠️  Failed to send SMS to {member.full_name}: {result.get('message')}")
-
-                    except Exception as e:
-                        sms_failed_count += 1
-                        print(f"⚠️  Error sending SMS to {member.full_name}: {str(e)}")
-
-                print(f"\n📊 SMS Summary: {sms_success_count} sent, {sms_failed_count} failed\n")
+                all_imported_members.extend(batch_members)
 
             except Exception as e:
-                print(f"⚠️  Error in SMS sending process: {str(e)}")
-                # Continue even if SMS fails
+                # Entire batch failed
+                logger.error(f"Batch import failed (rows {batch_start+2}-{batch_start+len(batch)+1}): {e}")
+                batch_errors.append(
+                    f"Batch error (rows {batch_start+2}-{batch_start+len(batch)+1}): {str(e)}"
+                )
+                error_count += len(batch)
 
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f"Error during import: {str(e)}",
-                'imported_count': 0,
-                'skipped_count': skipped_count,
-                'error_count': error_count + len(validated_records),
-                'errors': errors + [f"Transaction failed: {str(e)}"],
-                'duplicates': duplicates
-            }
+        errors.extend(batch_errors)
+
+        # Optionally send welcome SMS (disabled by default)
+        if send_notifications and all_imported_members:
+            self._send_welcome_messages(all_imported_members)
 
         # Prepare response
-        success = error_count == 0 and imported_count > 0
+        success = imported_count > 0
         message = self._generate_summary_message(
             imported_count, skipped_count, error_count
         )
@@ -354,6 +375,78 @@ class MemberImportService:
             import_batch_id=batch_id
         )
         return member
+
+    def _create_user_for_member(
+        self,
+        member: Member,
+        existing_usernames: set
+    ) -> Optional[User]:
+        """
+        Create a Django User account for an imported member so they can
+        log in via OTP immediately.
+
+        Args:
+            member: The Member instance
+            existing_usernames: Set of existing usernames to avoid duplicates
+
+        Returns:
+            Created User instance or None if user already exists
+        """
+        username = member.phone_number
+
+        if username in existing_usernames:
+            # User already exists, try to link
+            try:
+                existing_user = User.objects.get(username=username)
+                return existing_user
+            except User.DoesNotExist:
+                pass
+
+        try:
+            user = User.objects.create(
+                username=username,
+                first_name=member.first_name,
+                last_name=member.last_name,
+                email=member.email or '',
+                is_active=True,
+            )
+            # Set unusable password - auth is via OTP only
+            user.set_unusable_password()
+            user.save(update_fields=['password'])
+            return user
+        except Exception as e:
+            logger.warning(f"Could not create user for member {member.phone_number}: {e}")
+            return None
+
+    def _send_welcome_messages(self, members: List[Member]):
+        """Send welcome SMS to imported members. Failures don't block import."""
+        try:
+            from members.otp import SMSService
+            sms_service = SMSService()
+
+            sms_success = 0
+            sms_failed = 0
+
+            for member in members:
+                try:
+                    message = (
+                        f"Welcome to SDA Church-Kawangware, {member.first_name}!\n\n"
+                        f"Your member number is: {member.member_number}\n\n"
+                        f"You can now make contributions via M-Pesa.\n\n"
+                        f"God bless you!"
+                    )
+                    result = sms_service.send_sms(member.phone_number, message)
+                    if result.get('success'):
+                        sms_success += 1
+                    else:
+                        sms_failed += 1
+                except Exception:
+                    sms_failed += 1
+
+            logger.info(f"Welcome SMS: {sms_success} sent, {sms_failed} failed")
+
+        except Exception as e:
+            logger.error(f"Error in SMS sending process: {e}")
 
     def _generate_summary_message(
         self,

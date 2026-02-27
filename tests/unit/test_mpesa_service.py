@@ -195,7 +195,9 @@ class TestMpesaCallbackHandler:
         handler = MpesaCallbackHandler()
         result = handler.process_callback(callback_data)
 
-        assert result['success'] is True  # Callback processed successfully
+        # Payment failed — process_callback returns success:False to signal
+        # the payment was not completed (distinct from a processing error).
+        assert result['success'] is False
 
         # Verify transaction was updated to failed
         transaction.refresh_from_db()
@@ -212,8 +214,9 @@ class TestMpesaCallbackHandler:
         handler = MpesaCallbackHandler()
         result = handler.process_callback(callback_data)
 
-        # Should still save callback but not update transaction
-        assert result['success'] is True
+        # No transaction found → process_callback returns success:False
+        assert result['success'] is False
+        # Callback is still persisted for audit even without a matched transaction
         assert MpesaCallback.objects.filter(
             checkout_request_id='nonexistent_checkout'
         ).exists()

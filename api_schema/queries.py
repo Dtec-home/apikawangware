@@ -24,7 +24,9 @@ from .types import (
 from .admin_queries import (
     AdminQueries,
     PaginatedContributions,
+    PaginatedC2BTransactions,
     ContributionStats,
+    C2BTransactionStats,
     DashboardStats,
     ContributionFilters,
     PaginationInput
@@ -44,6 +46,10 @@ class Query:
     contribution_stats: ContributionStats = strawberry.field(resolver=AdminQueries.contribution_stats)
     dashboard_stats: DashboardStats = strawberry.field(resolver=AdminQueries.dashboard_stats)
     members_list: List[MemberType] = strawberry.field(resolver=AdminQueries.members_list)
+
+    # C2B queries - delegated to AdminQueries class
+    c2b_transactions: PaginatedC2BTransactions = strawberry.field(resolver=AdminQueries.c2b_transactions)
+    c2b_transaction_stats: C2BTransactionStats = strawberry.field(resolver=AdminQueries.c2b_transaction_stats)
 
     # Category admin queries - delegated to AdminQueries class
     category_admins: List[CategoryAdminType] = strawberry.field(resolver=AdminQueries.category_admins)
@@ -145,6 +151,27 @@ class Query:
             ).get(id=id)
         except Contribution.DoesNotExist:
             return None
+
+    @strawberry.field
+    def contributions_by_checkout_id(
+        self,
+        checkout_request_id: str
+    ) -> List[ContributionType]:
+        """
+        Get all contributions associated with a specific M-Pesa checkout request ID.
+        Used by the confirmation page for multi-category contributions where no
+        single contribution ID is available.
+        """
+        from mpesa.models import MpesaTransaction
+        try:
+            transaction = MpesaTransaction.objects.get(
+                checkout_request_id=checkout_request_id
+            )
+            return transaction.contributions.select_related(
+                'member', 'category', 'mpesa_transaction'
+            ).all()
+        except MpesaTransaction.DoesNotExist:
+            return []
 
     @strawberry.field
     def payment_status(

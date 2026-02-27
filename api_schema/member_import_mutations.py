@@ -9,6 +9,7 @@ from django.contrib.auth.models import User
 
 from .types import MemberImportResponse
 from members.member_import_service import MemberImportService
+from members.roles import PermissionChecker
 
 
 @strawberry.type
@@ -20,15 +21,17 @@ class MemberImportMutations:
         self,
         info,
         csv_data: str,
-        file_type: str = 'csv'
+        file_type: str = 'csv',
+        send_notifications: bool = False
     ) -> 'MemberImportResponse':
         """
         Import members from CSV or Excel data.
-        Requires admin authentication.
+        Requires staff authentication (admin, treasurer, or pastor).
 
         Args:
             csv_data: CSV content as string or base64 encoded Excel
             file_type: 'csv' or 'excel'
+            send_notifications: Whether to send welcome SMS (default False)
 
         Returns:
             MemberImportResponse with import results
@@ -46,15 +49,15 @@ class MemberImportMutations:
                 duplicates=[]
             )
 
-        # Check if user is staff/admin
-        if not user.is_staff:
+        # Check if user has staff role via custom permission system
+        if not PermissionChecker.is_staff(user):
             return MemberImportResponse(
                 success=False,
-                message="Admin access required",
+                message="Staff access required. Contact an admin to get the appropriate role.",
                 imported_count=0,
                 skipped_count=0,
                 error_count=0,
-                errors=["Insufficient permissions"],
+                errors=["Insufficient permissions - requires admin, treasurer, or pastor role"],
                 duplicates=[]
             )
 
@@ -62,7 +65,8 @@ class MemberImportMutations:
         import_service = MemberImportService()
         result = import_service.import_members(
             file_content=csv_data,
-            file_type=file_type
+            file_type=file_type,
+            send_notifications=send_notifications
         )
 
         return MemberImportResponse(

@@ -1,0 +1,71 @@
+name: Django Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_church_funds
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run migrations
+      working-directory: ./church_BE
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_church_funds
+        DJANGO_SETTINGS_MODULE: church_BE.settings
+      run: |
+        python manage.py migrate
+
+    - name: Run tests
+      working-directory: ./church_BE
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_church_funds
+        DJANGO_SETTINGS_MODULE: church_BE.settings
+      run: |
+        python -m pytest --cov=. --cov-report=xml --cov-report=term
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./church_BE/coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false

@@ -18,10 +18,12 @@ from .types import (
     CategoryAdminType,
     CategoryAdminRoleType,
     UserRoleInfo,
+    C2BTransactionType,
 )
 from contributions.models import Contribution, ContributionCategory, CategoryAdmin
 from members.models import Member
 from members.roles import PermissionChecker
+from mpesa.models import C2BTransaction
 
 
 @strawberry.type
@@ -73,6 +75,24 @@ class PaginationInput:
 class PaginatedContributions:
     """Paginated contribution results"""
     items: List[ContributionType]
+    total: int
+    has_more: bool
+
+
+@strawberry.type
+class C2BTransactionStats:
+    """Statistics for C2B transactions"""
+    total_amount: str
+    total_count: int
+    processed_count: int
+    unmatched_count: int
+    failed_count: int
+
+
+@strawberry.type
+class PaginatedC2BTransactions:
+    """Paginated C2B transaction results"""
+    items: List[C2BTransactionType]
     total: int
     has_more: bool
 
@@ -504,6 +524,91 @@ class AdminQueries:
         return CategoryAdmin.is_category_admin(
             member_id=int(member_id),
             category_id=int(category_id)
+        )
+
+    @strawberry.field
+    def c2b_transactions(
+        self,
+        info,
+        status: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        pagination: Optional[PaginationInput] = None
+    ) -> PaginatedC2BTransactions:
+        """
+        Get C2B transactions with optional filters and pagination.
+        Requires staff role.
+        """
+        user = info.context.request.user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+        if not PermissionChecker.is_staff(user):
+            raise PermissionError("Requires staff privileges")
+
+        queryset = C2BTransaction.objects.all()
+
+        if status:
+            queryset = queryset.filter(status=status)
+        if date_from:
+            queryset = queryset.filter(created_at__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__lte=date_to)
+
+        total = queryset.count()
+        queryset = queryset.order_by('-created_at')
+
+        if pagination:
+            limit = pagination.limit
+            offset = pagination.offset
+            queryset = queryset[offset:offset + limit]
+            has_more = (offset + limit) < total
+        else:
+            has_more = False
+
+        return PaginatedC2BTransactions(
+            items=list(queryset),
+            total=total,
+            has_more=has_more
+        )
+
+    @strawberry.field
+    def c2b_transaction_stats(
+        self,
+        info,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None
+    ) -> C2BTransactionStats:
+        """
+        Get aggregate statistics for C2B transactions.
+        Requires staff role.
+        """
+        user = info.context.request.user
+        if not user.is_authenticated:
+            raise PermissionError("Authentication required")
+        if not PermissionChecker.is_staff(user):
+            raise PermissionError("Requires staff privileges")
+
+        queryset = C2BTransaction.objects.all()
+
+        if date_from:
+            queryset = queryset.filter(created_at__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__lte=date_to)
+
+        total_stats = queryset.aggregate(
+            total_amount=Sum('trans_amount'),
+            total_count=Count('id')
+        )
+        processed_count = queryset.filter(status='processed').count()
+        unmatched_count = queryset.filter(status='unmatched').count()
+        failed_count = queryset.filter(status='failed').count()
+
+        return C2BTransactionStats(
+            total_amount=str(total_stats['total_amount'] or Decimal('0.00')),
+            total_count=total_stats['total_count'] or 0,
+            processed_count=processed_count,
+            unmatched_count=unmatched_count,
+            failed_count=failed_count
         )
 
     @strawberry.field

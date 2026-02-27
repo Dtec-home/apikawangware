@@ -6,14 +6,18 @@ Following SOLID principles:
 """
 
 import base64
+import logging
 import requests
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Optional
 from decouple import config
 from django.utils import timezone
+from django.utils.timezone import make_aware
 
-from .models import MpesaTransaction, MpesaCallback
+from .models import MpesaTransaction, MpesaCallback, C2BTransaction, C2BCallback
+
+logger = logging.getLogger(__name__)
 
 
 class MpesaAuthService:
@@ -307,18 +311,27 @@ class MpesaCallbackHandler:
         """
         Update contribution status when M-Pesa transaction is updated.
         Following SRP: Separated concern for contribution updates.
+        Raises on failure so the caller can log/handle accordingly.
         """
-        try:
-            # Check if there's an associated contribution
-            if hasattr(transaction, 'contribution') and transaction.contribution:
-                contribution = transaction.contribution
-                contribution.status = status
-                if status == 'completed' and transaction.transaction_date:
-                    contribution.transaction_date = transaction.transaction_date
-                contribution.save()
-        except Exception as e:
-            # Log error but don't fail the callback processing
-            print(f"Error updating contribution status: {str(e)}")
+        # Update all contributions linked to this transaction
+        contributions = transaction.contributions.all()
+        if contributions.exists():
+            update_fields = {'status': status}
+            if status == 'completed' and transaction.transaction_date:
+                update_fields['transaction_date'] = transaction.transaction_date
+            updated_count = contributions.update(**update_fields)
+            print(f"✅ Updated {updated_count} contribution(s) to '{status}'")
+            logger.info(
+                f"Updated {updated_count} contribution(s) to '{status}' "
+                f"for transaction {transaction.checkout_request_id}"
+            )
+        else:
+            msg = (
+                f"No contributions found for transaction {transaction.checkout_request_id}. "
+                f"Contributions may not have been linked correctly."
+            )
+            print(f"⚠️  {msg}")
+            logger.warning(msg)
 
     def process_callback(self, callback_data: Dict) -> Dict:
         """
@@ -378,18 +391,24 @@ class MpesaCallbackHandler:
                     transaction.mpesa_receipt_number = metadata.get('MpesaReceiptNumber')
 
                     # Parse transaction date if available
+                    # Use make_aware() so Django's USE_TZ=True is respected
                     if 'TransactionDate' in metadata:
                         trans_date_str = str(metadata['TransactionDate'])
                         # Format: 20231115143022
-                        transaction.transaction_date = datetime.strptime(
-                            trans_date_str,
-                            '%Y%m%d%H%M%S'
-                        )
+                        naive_dt = datetime.strptime(trans_date_str, '%Y%m%d%H%M%S')
+                        transaction.transaction_date = make_aware(naive_dt)
 
                     transaction.save()
 
-                    # Update associated contribution if exists
-                    self._update_contribution_status(transaction, 'completed')
+                    # Update associated contributions
+                    try:
+                        self._update_contribution_status(transaction, 'completed')
+                    except Exception as contrib_err:
+                        logger.error(
+                            f"Failed to update contribution status for transaction "
+                            f"{transaction.checkout_request_id}: {contrib_err}",
+                            exc_info=True
+                        )
 
                     # Send receipt SMS to contributor
                     self._send_contribution_receipt(transaction)
@@ -406,8 +425,15 @@ class MpesaCallbackHandler:
                     transaction.result_desc = result_desc
                     transaction.save()
 
-                    # Update associated contribution if exists
-                    self._update_contribution_status(transaction, 'failed')
+                    # Update associated contributions
+                    try:
+                        self._update_contribution_status(transaction, 'failed')
+                    except Exception as contrib_err:
+                        logger.error(
+                            f"Failed to update contribution status to 'failed' for transaction "
+                            f"{transaction.checkout_request_id}: {contrib_err}",
+                            exc_info=True
+                        )
 
                     return {
                         'success': False,
@@ -425,4 +451,169 @@ class MpesaCallbackHandler:
             return {
                 'success': False,
                 'message': f'Error processing callback: {str(e)}'
+            }
+
+
+class MpesaC2BService:
+    """
+    Handles M-Pesa C2B (Customer to Business) API operations.
+    Following SRP: Only responsible for C2B URL registration and simulation.
+    """
+
+    def __init__(self):
+        self.auth_service = MpesaAuthService()
+        self.short_code = config('MPESA_C2B_SHORT_CODE', default=config('MPESA_BUSINESS_SHORT_CODE', default='174379'))
+        self.use_sandbox = config('MPESA_USE_SANDBOX', default=True, cast=bool)
+
+        if self.use_sandbox:
+            self.base_url = 'https://sandbox.safaricom.co.ke'
+        else:
+            self.base_url = 'https://api.safaricom.co.ke'
+
+    def register_urls(self, validation_url: str, confirmation_url: str) -> Dict:
+        """
+        Register C2B validation and confirmation URLs with Safaricom.
+        This is a one-time setup per environment.
+
+        Args:
+            validation_url: URL for payment validation callbacks
+            confirmation_url: URL for payment confirmation callbacks
+
+        Returns:
+            dict: Contains success status and response data
+        """
+        try:
+            access_token = self.auth_service.get_access_token()
+            if not access_token:
+                return {
+                    'success': False,
+                    'message': 'Failed to authenticate with M-Pesa'
+                }
+
+            url = f"{self.base_url}/mpesa/c2b/v2/registerurl"
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            payload = {
+                'ShortCode': self.short_code,
+                'ResponseType': 'Completed',
+                'ConfirmationURL': confirmation_url,
+                'ValidationURL': validation_url
+            }
+
+            logger.info(f"Registering C2B URLs - Validation: {validation_url}, Confirmation: {confirmation_url}")
+            print(f"\n{'='*60}")
+            print(f"C2B URL REGISTRATION")
+            print(f"   ShortCode: {self.short_code}")
+            print(f"   Validation URL: {validation_url}")
+            print(f"   Confirmation URL: {confirmation_url}")
+            print(f"{'='*60}")
+
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+            print(f"   Response Status: {response.status_code}")
+            print(f"   Response Body: {response.text}")
+
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('ResponseCode') == '0' or data.get('ResponseDescription', '').lower().startswith('success'):
+                logger.info(f"C2B URLs registered successfully")
+                return {
+                    'success': True,
+                    'message': data.get('ResponseDescription', 'URLs registered successfully'),
+                    'data': data
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': data.get('ResponseDescription', 'Failed to register URLs'),
+                    'data': data
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error registering C2B URLs: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Network error: {str(e)}'
+            }
+
+    def simulate_c2b(self, phone_number: str, amount: Decimal, bill_ref_number: str) -> Dict:
+        """
+        Simulate a C2B payment in the Daraja sandbox.
+        Only works in sandbox mode.
+
+        Args:
+            phone_number: Customer phone number (254XXXXXXXXX)
+            amount: Payment amount
+            bill_ref_number: Account reference (maps to category code)
+
+        Returns:
+            dict: Contains success status and response data
+        """
+        if not self.use_sandbox:
+            return {
+                'success': False,
+                'message': 'C2B simulation is only available in sandbox mode'
+            }
+
+        try:
+            access_token = self.auth_service.get_access_token()
+            if not access_token:
+                return {
+                    'success': False,
+                    'message': 'Failed to authenticate with M-Pesa'
+                }
+
+            url = f"{self.base_url}/mpesa/c2b/v2/simulate"
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+
+            payload = {
+                'ShortCode': self.short_code,
+                'CommandID': 'CustomerPayBillOnline',
+                'Amount': int(amount),
+                'Msisdn': phone_number,
+                'BillRefNumber': bill_ref_number
+            }
+
+            logger.info(f"Simulating C2B: {phone_number} -> KES {amount} -> {bill_ref_number}")
+            print(f"\n{'='*60}")
+            print(f"C2B SIMULATION")
+            print(f"   ShortCode: {self.short_code}")
+            print(f"   Phone: {phone_number}")
+            print(f"   Amount: KES {amount}")
+            print(f"   BillRefNumber: {bill_ref_number}")
+            print(f"{'='*60}")
+
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+            print(f"   Response Status: {response.status_code}")
+            print(f"   Response Body: {response.text}")
+
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('ResponseCode') == '0':
+                return {
+                    'success': True,
+                    'message': data.get('ResponseDescription', 'Simulation successful'),
+                    'data': data
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': data.get('ResponseDescription', 'Simulation failed'),
+                    'data': data
+                }
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error simulating C2B: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Network error: {str(e)}'
             }

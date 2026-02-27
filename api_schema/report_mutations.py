@@ -4,7 +4,7 @@ Handles report generation with staff permissions
 """
 
 import strawberry
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import base64
 
@@ -38,6 +38,7 @@ class ReportMutations:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         category_id: Optional[int] = None,
+        category_ids: Optional[List[int]] = None,
         member_id: Optional[int] = None
     ) -> ReportResponse:
         """
@@ -48,7 +49,8 @@ class ReportMutations:
             report_type: Type of report ('daily', 'weekly', 'monthly', 'custom')
             date_from: Start date (for custom reports)
             date_to: End date (for custom reports)
-            category_id: Filter by category
+            category_id: Filter by single category (legacy, use category_ids instead)
+            category_ids: Filter by multiple categories
             member_id: Filter by member
 
         Returns:
@@ -82,6 +84,11 @@ class ReportMutations:
                 message="Invalid report type. Must be 'daily', 'weekly', 'monthly', or 'custom'"
             )
 
+        # Merge category_id into category_ids for backward compatibility
+        merged_category_ids = list(category_ids) if category_ids else []
+        if category_id and category_id not in merged_category_ids:
+            merged_category_ids.append(category_id)
+
         # Generate report
         try:
             report_service = ReportService()
@@ -90,7 +97,7 @@ class ReportMutations:
                 report_type=report_type,
                 date_from=date_from,
                 date_to=date_to,
-                category_id=category_id,
+                category_ids=merged_category_ids or None,
                 member_id=member_id
             )
 
